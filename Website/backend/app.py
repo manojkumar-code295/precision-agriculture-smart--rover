@@ -23,6 +23,7 @@ logging.basicConfig(
 logger = logging.getLogger("CloudAPI")
 
 app = Flask(__name__)
+application = app
 # Enable CORS for all origins so Angular frontend on Render Static Site can connect seamlessly
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
