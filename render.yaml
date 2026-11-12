@@ -20,7 +20,7 @@ services:
   - type: static
     name: precision-agriculture-smart--rover-web
     rootDir: Website/frontend
-    buildCommand: npm install && npm run build -- --configuration production
+    buildCommand: npm install && npm run build
     publishDir: dist/frontend/browser
     routes:
       - type: rewrite

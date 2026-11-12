@@ -119,12 +119,26 @@ npm start
 ```
 
 ### 3. Deploy to Render
-The repository includes a ready-to-deploy [`render.yaml`](render.yaml) blueprint:
+
+The repository is configured for both **1-Click Blueprint Deployment** and **Manual Web Service Deployment**:
+
+#### Option A: Deploy via Blueprint (Recommended - 1-Click)
 1. Push your repository to GitHub.
-2. In Render Dashboard, click **New > Blueprint**.
-3. Select your repository. Render will automatically deploy:
-   - **Cloud Flask Web Service**: `https://<your-service-name>.onrender.com`
-   - **Angular Static Site**: `https://<your-site-name>.onrender.com`
+2. In the [Render Dashboard](https://dashboard.render.com), click **New + > Blueprint**.
+3. Connect your repository (`precision-agriculture-smart--rover`).
+4. Render automatically reads [`render.yaml`](render.yaml) and provisions:
+   - **Cloud Flask Web Service**: `https://precision-agriculture-smart--rover-api.onrender.com`
+   - **Angular Static Site**: `https://precision-agriculture-smart--rover-web.onrender.com`
+
+#### Option B: Deploy Backend as a Manual Web Service
+If you created a **Web Service** manually instead of using Blueprint:
+- **Root Directory**: Leave blank (default) OR set to `Website/backend`
+- **Build Command**: `pip install -r requirements.txt`
+- **Start Command**: `gunicorn app:app --bind 0.0.0.0:$PORT`
+- **Environment Variables**:
+  - `PYTHON_VERSION`: `3.11.9`
+  - `ROVER_API_KEY`: `smartrover_secure_key_2026`
+  - `CLOUD_DB_PATH`: `cloud_rover.db`
 
 ---
 
