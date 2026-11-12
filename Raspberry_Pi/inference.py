@@ -10,8 +10,11 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Tuple, Optional
+import cv2
 import numpy as np
 from PIL import Image
+
+from leaf_detector import comprehensive_leaf_verifier
 
 try:
     from ai_edge_litert.interpreter import Interpreter
@@ -130,13 +133,54 @@ class LeafDiseaseClassifier:
             return img_array
 
     def predict(self, image_path: Path, confidence_threshold: Optional[float] = None) -> Dict[str, Any]:
-        """Runs TFLite edge inference on a leaf image and returns comprehensive diagnostics."""
+        """
+        Two-stage AI diagnosis pipeline:
+        Stage 1: Real Botanical Leaf Verification
+                 Rejects non-plant objects (human hands/skin, walls, curtains, tables, clothes).
+        Stage 2: Edge TFLite Disease Classification
+                 Only executed if Stage 1 confirms a genuine plant leaf.
+        """
         threshold = confidence_threshold if confidence_threshold is not None else config.DEFAULT_CONFIDENCE_THRESHOLD
 
         valid, err_msg = self.validate_image(image_path)
         if not valid:
             raise ValueError(f"Image validation failed: {err_msg}")
 
+        # Stage 1: Real Botanical Leaf Verification
+        img_bgr = cv2.imread(str(image_path))
+        is_leaf, leaf_status, leaf_conf, leaf_details = comprehensive_leaf_verifier(img_bgr)
+
+        if not is_leaf:
+            logger.info(f"Leaf verification rejected image {image_path.name}: {leaf_status} ({leaf_details.get('reason')})")
+            return {
+                "detection_id": f"DET-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}",
+                "timestamp": datetime.now().isoformat(),
+                "image_filename": image_path.name,
+                "image_path": str(image_path.resolve()),
+                "leaf_detected": False,
+                "status": "NO_LEAF_DETECTED",
+                "display_label": leaf_status,
+                "predicted_disease": leaf_status,
+                "disease_code": "NO_LEAF",
+                "confidence": 0.0,
+                "confidence_threshold": threshold,
+                "is_low_confidence": True,
+                "all_class_probabilities": {name: 0.0 for name in self.class_names},
+                "disease_details": {
+                    "disease_name": leaf_status,
+                    "symptoms": leaf_details.get("reason", "Non-plant object detected in camera view."),
+                    "treatment_type": "No Chemical Treatment",
+                    "recommended_chemicals": "None",
+                    "management_guidance": "No leaf result. Please place a real chili plant leaf in front of the camera.",
+                    "safety_warning": "No action needed."
+                },
+                "recommendation": f"{leaf_status}. Please place a real chili plant leaf in front of the camera under clear lighting.",
+                "sprayer_recommended": False,
+                "requires_user_confirmation": False,
+                "verification_details": leaf_details
+            }
+
+        # Stage 2: TFLite Disease Classification on Confirmed Leaf
         input_data = self.preprocess_image(image_path)
 
         # Set input tensor and invoke interpreter
@@ -162,6 +206,10 @@ class LeafDiseaseClassifier:
             "timestamp": datetime.now().isoformat(),
             "image_filename": image_path.name,
             "image_path": str(image_path.resolve()),
+            "leaf_detected": True,
+            "status": "PLANT_LEAF_DETECTED",
+            "display_label": "Plant / Leaf Detected",
+            "leaf_confidence": leaf_conf,
             "predicted_disease": predicted_class if not is_low_confidence else f"{predicted_class} (Low Confidence)",
             "disease_code": predicted_class,
             "confidence": round(raw_confidence, 2),
@@ -174,7 +222,8 @@ class LeafDiseaseClassifier:
             "disease_details": disease_info,
             "recommendation": recommendation_text,
             "sprayer_recommended": (predicted_class in ("Bacterial_Spot", "Cercospora_Leaf_Spot") and not is_low_confidence),
-            "requires_user_confirmation": True
+            "requires_user_confirmation": True,
+            "verification_details": leaf_details
         }
 
         return detection_record

@@ -37,6 +37,7 @@ class CloudSyncService:
         self.api_key = config.CLOUD_API_KEY
         self.sync_interval = config.SYNC_INTERVAL_SEC
         self.heartbeat_interval = 3.0  # Frequent telemetry heartbeat for real-time remote commands
+        self.session = requests.Session()
 
         self.is_online = False
         self.last_sync_time = None
@@ -45,9 +46,10 @@ class CloudSyncService:
         self.running = True
         self.sync_thread = None
         self.heartbeat_thread = None
+        self.camera_stream_thread = None
 
     def start(self):
-        """Starts background periodic sync and heartbeat threads."""
+        """Starts background periodic sync, heartbeat, and live camera streaming threads."""
         def sync_worker():
             while self.running:
                 try:
@@ -64,13 +66,44 @@ class CloudSyncService:
                     logger.debug(f"Heartbeat cycle error: {e}")
                 time.sleep(self.heartbeat_interval)
 
+        def camera_stream_worker():
+            """Continuously transmits live annotated camera frames to Render Cloud API."""
+            logger.info(f"Cloud camera live streaming worker active -> {self.cloud_url}/api/camera/stream_frame")
+            while self.running:
+                try:
+                    if self.camera and getattr(self.camera, "is_connected", False):
+                        jpeg_bytes = self.camera.get_jpeg_frame()
+                        if jpeg_bytes and len(jpeg_bytes) > 200:
+                            headers = {
+                                "Content-Type": "image/jpeg",
+                                "X-Device-ID": config.DEVICE_ID,
+                                "X-API-Key": self.api_key
+                            }
+                            try:
+                                resp = self.session.post(
+                                    f"{self.cloud_url}/api/camera/stream_frame",
+                                    data=jpeg_bytes,
+                                    headers=headers,
+                                    timeout=2.0
+                                )
+                                if resp.status_code in (200, 204):
+                                    self.is_online = True
+                            except requests.RequestException:
+                                time.sleep(0.5)
+                except Exception as e:
+                    logger.debug(f"Frame transmission loop error: {e}")
+                time.sleep(0.18)  # ~5.5 FPS continuous cloud stream
+
         self.sync_thread = threading.Thread(target=sync_worker, daemon=True)
         self.sync_thread.start()
 
         self.heartbeat_thread = threading.Thread(target=heartbeat_worker, daemon=True)
         self.heartbeat_thread.start()
 
-        logger.info(f"Cloud sync & heartbeat service started -> Target: {self.cloud_url}")
+        self.camera_stream_thread = threading.Thread(target=camera_stream_worker, daemon=True)
+        self.camera_stream_thread.start()
+
+        logger.info(f"Cloud sync, heartbeat & camera streaming started -> Target: {self.cloud_url}")
 
     def check_cloud_health(self) -> bool:
         """Pings cloud API health check endpoint."""

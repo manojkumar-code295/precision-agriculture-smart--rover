@@ -88,7 +88,7 @@ OPTIONAL_SENSORS = {
 }
 
 # Cloud Synchronization Configuration
-CLOUD_API_URL = os.getenv("CLOUD_API_URL", "https://precision-agriculture-smart--rover-api.onrender.com")
+CLOUD_API_URL = os.getenv("CLOUD_API_URL", "https://precision-agriculture-smart-rover.onrender.com")
 CLOUD_API_KEY = os.getenv("CLOUD_API_KEY", "smartrover_secure_key_2026")
 SYNC_INTERVAL_SEC = int(os.getenv("SYNC_INTERVAL_SEC", "30"))
 SYNC_BATCH_SIZE = int(os.getenv("SYNC_BATCH_SIZE", "20"))

@@ -23,6 +23,12 @@ from tkinter import ttk, filedialog, messagebox
 
 # Resolve base directories
 SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.append(str(SCRIPT_DIR / "Raspberry_Pi"))
+try:
+    from leaf_detector import comprehensive_leaf_verifier
+except ImportError:
+    comprehensive_leaf_verifier = None
+
 AI_DIR = SCRIPT_DIR / "AI_Model"
 TFLITE_MODEL_PATH = AI_DIR / "model.tflite"
 KERAS_MODEL_PATH = AI_DIR / "best_chili_leaf_model.keras"
@@ -141,8 +147,24 @@ class ModelEngine:
         return False
 
     def predict(self, image: Image.Image) -> Tuple[str, float, float, Dict[str, float]]:
-        """Preprocesses image and runs classification. Returns (label, confidence%, latency_ms, all_scores)."""
+        """
+        Two-stage AI diagnosis pipeline:
+        Stage 1: Real Botanical Leaf Verification
+        Stage 2: Model Classification (only if confirmed leaf)
+        """
         t0 = time.time()
+
+        # Stage 1: Real Botanical Leaf Verification
+        if comprehensive_leaf_verifier is not None:
+            img_np = np.asarray(image.convert("RGB"))
+            img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR) if CV2_AVAILABLE else img_np[:, :, ::-1]
+            is_leaf, leaf_status, leaf_conf, det_meta = comprehensive_leaf_verifier(img_bgr)
+
+            if not is_leaf:
+                latency_ms = (time.time() - t0) * 1000.0
+                return leaf_status, 0.0, latency_ms, {name: 0.0 for name in self.class_names}
+
+        # Stage 2: Disease Classification
         resized = image.convert("RGB").resize(self.input_shape)
         arr = np.asarray(resized, dtype=np.float32)
         arr = np.expand_dims(arr, axis=0)

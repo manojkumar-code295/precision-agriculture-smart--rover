@@ -152,7 +152,7 @@
             <div class="card-header">
               <div class="card-title-group">
                 <h3>📹 Live Camera & Command Center</h3>
-                <span class="badge badge-live" *ngIf="liveStreamActive && !streamError">● LIVE CSI FEED (ov5647)</span>
+                <span class="badge badge-live" *ngIf="liveStreamActive && !streamError">● LIVE 8–10 FPS (Picamera2 CSI)</span>
                 <span class="badge badge-warning" *ngIf="streamError || !liveStreamActive">Feed Disconnected</span>
               </div>
               <div class="stream-actions">
@@ -169,8 +169,8 @@
                 <div class="stream-wrapper" *ngIf="liveStreamActive && !streamError; else streamPaused">
                   <img [src]="liveStreamUrl" alt="Live Camera Feed with Leaf Detection" class="live-feed-img" (error)="onStreamError($event)" />
                   <div class="stream-badge-overlay">
-                    <span class="tag green-tag">Leaf Tracking Active</span>
-                    <span class="tag">Picamera2 ov5647</span>
+                    <span class="tag green-tag">🌿 Botanical Leaf Verifier Active</span>
+                    <span class="tag">640×480 &#64; 8–10 FPS</span>
                   </div>
                 </div>
                 <ng-template #streamPaused>
@@ -205,8 +205,8 @@
           <div class="card glass-card">
             <div class="card-header">
               <h3>Latest AI Diagnosis</h3>
-              <span class="badge" [ngClass]="latestDetection?.predicted_disease === 'Healthy_Leaf' ? 'badge-success' : 'badge-danger'">
-                {{ latestDetection ? latestDetection.predicted_disease : 'No Data' }}
+              <span class="badge" [ngClass]="latestDetection?.leaf_detected ? (latestDetection?.predicted_disease === 'Healthy_Leaf' ? 'badge-success' : 'badge-danger') : 'badge-warning'">
+                {{ latestDetection ? (latestDetection.leaf_detected ? '🌿 ' + latestDetection.predicted_disease : '⚠ ' + latestDetection.predicted_disease) : 'No Data' }}
               </span>
             </div>
             <div class="card-body">
@@ -217,13 +217,15 @@
                        (error)="$any($event.target).src = 'public/favicon.ico'" />
                 </div>
                 <div class="det-meta">
-                  <p><strong>Confidence:</strong> {{ latestDetection.confidence }}%</p>
+                  <p *ngIf="latestDetection.leaf_detected !== false"><strong>Status:</strong> <span class="tag green-tag">🌿 Plant / Leaf Detected</span></p>
+                  <p *ngIf="latestDetection.leaf_detected === false"><strong>Status:</strong> <span class="tag warning-tag">⚠ Non-Plant Rejected</span></p>
+                  <p *ngIf="latestDetection.leaf_detected !== false"><strong>Confidence:</strong> {{ latestDetection.confidence }}%</p>
                   <p><strong>Timestamp:</strong> {{ latestDetection.timestamp | date:'medium' }}</p>
                   <div class="rec-box">
                     <strong>Treatment Guidance:</strong>
                     <p>{{ latestDetection.recommendation }}</p>
                   </div>
-                  <div class="det-actions" *ngIf="latestDetection.predicted_disease !== 'Healthy_Leaf'">
+                  <div class="det-actions" *ngIf="latestDetection.leaf_detected !== false && latestDetection.predicted_disease !== 'Healthy_Leaf'">
                     <button class="btn btn-primary" (click)="promptSpray(latestDetection.predicted_disease)">
                       💧 Treat with Sprayer
                     </button>
@@ -330,7 +332,7 @@
                      class="feed-img live-mjpeg"
                      (error)="onStreamError($event)" />
                 <div class="feed-overlay">
-                  <span class="badge badge-dark">MJPEG Stream | Green Box Tracking Active</span>
+                  <span class="badge badge-dark">● LIVE 8–10 FPS | Botanical Leaf Tracking Active</span>
                 </div>
               </div>
               <ng-template #staticOrEmpty>

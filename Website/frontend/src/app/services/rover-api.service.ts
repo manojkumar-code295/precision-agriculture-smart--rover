@@ -69,6 +69,8 @@ export interface DetectionRecord {
   timestamp: string;
   image_filename: string;
   image_url?: string;
+  leaf_detected?: boolean;
+  display_label?: string;
   predicted_disease: string;
   disease_code?: string;
   confidence: number;
@@ -96,7 +98,7 @@ export class RoverApiService {
       if (window.location && window.location.hostname) {
         const host = window.location.hostname;
         if (host.includes('onrender.com')) {
-          return 'https://precision-agriculture-smart--rover-api.onrender.com';
+          return 'https://precision-agriculture-smart-rover.onrender.com';
         }
         if (host !== 'localhost' && host !== '127.0.0.1') {
           return `http://${host}:5000`;
@@ -139,8 +141,19 @@ export class RoverApiService {
   }
 
   // 2. Camera & Detection
+  isCloudMode(): boolean {
+    return this.url.includes('onrender.com') || this.url.includes(':5001');
+  }
+
   getLiveStreamUrl(): string {
+    if (this.isCloudMode()) {
+      return `${this.url}/api/camera/live_frame`;
+    }
     return `${this.url}/api/camera/stream`;
+  }
+
+  getLiveFrameUrl(): string {
+    return `${this.url}/api/camera/live_frame`;
   }
 
   setAutoDetect(enabled: boolean, interval: number = 3.0): Observable<any> {

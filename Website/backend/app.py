@@ -610,9 +610,47 @@ def get_cloud_sensors():
         "sensors": LIVE_STATUS["sensors"]
     })
 
-@app.route("/api/camera/stream", methods=["GET"])
-def cloud_camera_stream():
-    # If viewed via Cloud, return latest captured detection frame as a snapshot JPEG
+# Live In-Memory Camera Frame Buffer
+LATEST_LIVE_FRAME = {
+    "bytes": None,
+    "timestamp": None,
+    "device_id": None
+}
+
+@app.route("/api/camera/stream_frame", methods=["POST"])
+def api_camera_stream_frame():
+    """Receives live camera JPEG frames sent from the Raspberry Pi rover."""
+    file = request.files.get("frame")
+    data = None
+    if file:
+        data = file.read()
+    elif request.data:
+        data = request.data
+
+    if data and len(data) > 100:
+        LATEST_LIVE_FRAME["bytes"] = data
+        LATEST_LIVE_FRAME["timestamp"] = datetime.now().isoformat()
+        LATEST_LIVE_FRAME["device_id"] = request.headers.get("X-Device-ID", "agrirover-pi4-01")
+        LIVE_STATUS["pi_online"] = True
+        LIVE_STATUS["last_seen"] = LATEST_LIVE_FRAME["timestamp"]
+        return jsonify({"success": True, "timestamp": LATEST_LIVE_FRAME["timestamp"]})
+    return jsonify({"success": False, "error": "No frame data"}), 400
+
+@app.route("/api/camera/live_frame", methods=["GET"])
+def api_camera_live_frame():
+    """Returns the latest single camera frame as image/jpeg."""
+    if LATEST_LIVE_FRAME["bytes"] is not None:
+        return Response(
+            LATEST_LIVE_FRAME["bytes"],
+            mimetype="image/jpeg",
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0"
+            }
+        )
+
+    # Check for latest stored detection image
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT image_filename FROM cloud_detections ORDER BY id DESC LIMIT 1")
@@ -622,7 +660,52 @@ def cloud_camera_stream():
             target_path = os.path.join(captures_dir, row["image_filename"])
             if os.path.exists(target_path):
                 return send_from_directory(captures_dir, row["image_filename"], mimetype="image/jpeg")
-    return jsonify({"status": "Awaiting Live Feed Telemetry", "pi_online": LIVE_STATUS["pi_online"]})
+
+    # Responsive SVG standby placeholder to prevent black box
+    svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480" viewBox="0 0 640 480">
+        <rect width="640" height="480" fill="#071b12"/>
+        <circle cx="320" cy="200" r="44" fill="#0f2e20" stroke="#10b981" stroke-width="2"/>
+        <text x="320" y="210" font-family="Arial, sans-serif" font-size="28" text-anchor="middle" fill="#10b981">&#x1F4F7;</text>
+        <text x="320" y="280" font-family="Arial, sans-serif" font-size="18" font-weight="bold" text-anchor="middle" fill="#34d399">CAMERA STANDBY</text>
+        <text x="320" y="310" font-family="Arial, sans-serif" font-size="13" text-anchor="middle" fill="#94a3b8">Awaiting Live Transmission from Raspberry Pi 4B</text>
+    </svg>'''
+    return Response(svg, mimetype="image/svg+xml")
+
+@app.route("/api/camera/stream", methods=["GET"])
+@app.route("/video_feed", methods=["GET"])
+def cloud_camera_stream():
+    """MJPEG stream yielding latest frames arriving from Raspberry Pi."""
+    def generate_stream():
+        last_yielded_ts = None
+        while True:
+            if LATEST_LIVE_FRAME["bytes"] is not None and LATEST_LIVE_FRAME["timestamp"] != last_yielded_ts:
+                last_yielded_ts = LATEST_LIVE_FRAME["timestamp"]
+                yield (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n\r\n" + LATEST_LIVE_FRAME["bytes"] + b"\r\n"
+                )
+            time.sleep(0.08)  # Check at ~12 FPS for instant low-latency frame delivery
+    return Response(generate_stream(), mimetype="multipart/x-mixed-replace; boundary=frame")
+
+@app.route("/api/camera/status", methods=["GET"])
+def api_camera_status():
+    """Returns camera live status, age, and online determination."""
+    has_frame = LATEST_LIVE_FRAME["bytes"] is not None
+    age_seconds = None
+    if has_frame and LATEST_LIVE_FRAME["timestamp"]:
+        try:
+            diff = datetime.now() - datetime.fromisoformat(LATEST_LIVE_FRAME["timestamp"])
+            age_seconds = diff.total_seconds()
+        except Exception:
+            pass
+    is_live = has_frame and age_seconds is not None and age_seconds < 15.0
+    return jsonify({
+        "camera_online": is_live,
+        "pi_connected": LIVE_STATUS["pi_online"],
+        "last_frame_timestamp": LATEST_LIVE_FRAME["timestamp"],
+        "last_frame_age_seconds": round(age_seconds, 1) if age_seconds is not None else None,
+        "device_id": LATEST_LIVE_FRAME["device_id"] or "agrirover-pi4-01"
+    })
 
 @app.route("/", defaults={"path": ""})
 @app.route("/<path:path>")

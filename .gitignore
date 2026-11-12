@@ -31,6 +31,7 @@ yarn-error.log*
 
 # Dataset (Kept local, do not push 6764 raw images to Git)
 Dataset/
+AI_Model/verifier/
 
 # OS Specific
 .DS_Store

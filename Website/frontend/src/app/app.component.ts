@@ -50,8 +50,15 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   onStreamError(event: any): void {
-    console.warn('Live stream disconnected or awaiting connection:', event);
+    console.warn('Live stream disconnected or awaiting frames:', event);
     this.streamError = true;
+    // Automatically retry connecting after 2.0s
+    setTimeout(() => {
+      if (this.liveStreamActive) {
+        this.streamError = false;
+        this.streamTimestamp = Date.now();
+      }
+    }, 2000);
   }
 
   toggleAutoDetect(): void {
@@ -86,6 +93,7 @@ export class AppComponent implements OnInit, OnDestroy {
 
   // Subscriptions
   private pollSub?: Subscription;
+  private frameSub?: Subscription;
 
   // Dataset Static Metadata (from Stage 2 Verified Reports)
   datasetInfo = {
@@ -115,12 +123,22 @@ export class AppComponent implements OnInit, OnDestroy {
       this.fetchLiveStatus();
     });
 
+    // High-speed progressive frame refresh for cloud live frame mode (2 FPS)
+    this.frameSub = interval(500).subscribe(() => {
+      if (this.liveStreamActive && this.api.isCloudMode() && !this.streamError) {
+        this.streamTimestamp = Date.now();
+      }
+    });
+
     this.loadDiseaseEncyclopedia();
   }
 
   ngOnDestroy(): void {
     if (this.pollSub) {
       this.pollSub.unsubscribe();
+    }
+    if (this.frameSub) {
+      this.frameSub.unsubscribe();
     }
   }
 
@@ -165,6 +183,9 @@ export class AppComponent implements OnInit, OnDestroy {
       this.sprayerActive = !!res?.sprayer?.sprayer_active;
       if (res?.latest_detection) {
         this.latestDetection = res.latest_detection;
+      }
+      if (this.streamError && res?.pi_online) {
+        this.streamError = false;
       }
     });
   }
@@ -342,7 +363,7 @@ export class AppComponent implements OnInit, OnDestroy {
     if (preset === 'local') {
       this.apiEndpoint = 'http://localhost:5000';
     } else if (preset === 'render') {
-      this.apiEndpoint = 'https://precision-agriculture-smart--rover-api.onrender.com';
+      this.apiEndpoint = 'https://precision-agriculture-smart-rover.onrender.com';
     }
   }
 
