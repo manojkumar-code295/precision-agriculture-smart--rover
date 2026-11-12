@@ -93,6 +93,12 @@ export class RoverApiService {
     if (typeof window !== 'undefined' && window.localStorage) {
       const stored = window.localStorage.getItem(this.apiUrlKey);
       if (stored) return stored;
+      // When deployed in cloud/production, auto-connect to Render Cloud API
+      if (window.location && window.location.hostname &&
+          !window.location.hostname.includes('localhost') &&
+          !window.location.hostname.includes('127.0.0.1')) {
+        return 'https://precision-agriculture-smart--rover-api.onrender.com';
+      }
     }
     return this.defaultApiUrl;
   }
