@@ -1,0 +1,60 @@
+{
+    "project": "Precision Smart Agricultural Rover",
+    "architecture": "MobileNetV2 CNN",
+    "framework": "TensorFlow",
+    "image_size": 160,
+    "batch_size": 32,
+    "classes": [
+        "Bacterial_Spot",
+        "Cercospora_Leaf_Spot",
+        "Curl_Virus",
+        "Healthy_Leaf"
+    ],
+    "total_images": 6764,
+    "training_images": 5411,
+    "validation_images": 676,
+    "testing_images": 677,
+    "test_accuracy": 0.9601181745529175,
+    "test_accuracy_percentage": 96.01,
+    "test_loss": 0.145130917429924,
+    "classification_report": {
+        "Bacterial_Spot": {
+            "precision": 1.0,
+            "recall": 0.9325153374233128,
+            "f1-score": 0.9650793650793651,
+            "support": 163.0
+        },
+        "Cercospora_Leaf_Spot": {
+            "precision": 0.96875,
+            "recall": 0.9789473684210527,
+            "f1-score": 0.9738219895287958,
+            "support": 190.0
+        },
+        "Curl_Virus": {
+            "precision": 0.94375,
+            "recall": 0.949685534591195,
+            "f1-score": 0.9467084639498433,
+            "support": 159.0
+        },
+        "Healthy_Leaf": {
+            "precision": 0.930635838150289,
+            "recall": 0.9757575757575757,
+            "f1-score": 0.9526627218934911,
+            "support": 165.0
+        },
+        "accuracy": 0.9601181683899557,
+        "macro avg": {
+            "precision": 0.9607839595375722,
+            "recall": 0.959226454048284,
+            "f1-score": 0.9595681351128738,
+            "support": 677.0
+        },
+        "weighted avg": {
+            "precision": 0.9611132397264368,
+            "recall": 0.9601181683899557,
+            "f1-score": 0.9601921852272656,
+            "support": 677.0
+        }
+    },
+    "training_date": "2026-11-11T11:44:38.216895"
+}

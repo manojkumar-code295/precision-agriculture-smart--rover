@@ -1,0 +1,28 @@
+services:
+  # 1. Cloud Flask API Web Service
+  - type: web
+    name: precision-agriculture-smart--rover-api
+    runtime: python
+    region: oregon
+    plan: free
+    rootDir: Website/backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: ROVER_API_KEY
+        value: smartrover_secure_key_2026
+      - key: CLOUD_DB_PATH
+        value: cloud_rover.db
+
+  # 2. Angular Responsive Frontend Static Site
+  - type: static
+    name: precision-agriculture-smart--rover-web
+    rootDir: Website/frontend
+    buildCommand: npm install && npm run build -- --configuration production
+    publishDir: dist/frontend/browser
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

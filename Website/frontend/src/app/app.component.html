@@ -1,0 +1,862 @@
+<div class="app-container">
+  <!-- Top Header Bar -->
+  <header class="top-nav">
+    <div class="nav-left">
+      <button class="mobile-menu-btn" (click)="toggleMobileMenu()" aria-label="Toggle Navigation">
+        <span class="bar"></span>
+        <span class="bar"></span>
+        <span class="bar"></span>
+      </button>
+      <div class="brand">
+        <span class="brand-icon">🌱</span>
+        <div class="brand-text">
+          <h1>AgriRover AI</h1>
+          <span class="subtitle">Precision Agriculture Smart Rover</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="nav-right">
+      <!-- Status Pills -->
+      <div class="status-pill" [ngClass]="status?.pi_online ? 'online' : 'offline'">
+        <span class="pulse-dot"></span>
+        <span>{{ status?.pi_online ? 'Pi Online' : 'Pi Offline' }}</span>
+      </div>
+
+      <div class="status-pill rover-pill" [ngClass]="isMoving ? 'moving' : 'idle'">
+        <span>Rover: {{ activeMovement }}</span>
+      </div>
+
+      <!-- Quick Action Emergency Stop -->
+      <button class="btn btn-estop-nav" (click)="emergencyStop()">
+        🛑 E-STOP
+      </button>
+    </div>
+  </header>
+
+  <!-- Global Alert Banner -->
+  <div *ngIf="alertMessage" class="alert-banner" [ngClass]="'alert-' + alertType">
+    <span>{{ alertMessage }}</span>
+    <button class="alert-close" (click)="alertMessage = null">✕</button>
+  </div>
+
+  <div class="main-body">
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar" [class.open]="mobileMenuOpen">
+      <nav class="nav-menu">
+        <a class="nav-item" [class.active]="activeTab === 'dashboard'" (click)="setTab('dashboard')">
+          <span class="nav-icon">📊</span>
+          <span>Dashboard</span>
+        </a>
+        <a class="nav-item" [class.active]="activeTab === 'camera'" (click)="setTab('camera')">
+          <span class="nav-icon">📷</span>
+          <span>Camera & AI</span>
+        </a>
+        <a class="nav-item" [class.active]="activeTab === 'rover'" (click)="setTab('rover')">
+          <span class="nav-icon">🕹️</span>
+          <span>Rover Steering</span>
+        </a>
+        <a class="nav-item" [class.active]="activeTab === 'sensors'" (click)="setTab('sensors')">
+          <span class="nav-icon">📡</span>
+          <span>Sensor Telemetry</span>
+        </a>
+        <a class="nav-item" [class.active]="activeTab === 'sprayer'" (click)="setTab('sprayer')">
+          <span class="nav-icon">💧</span>
+          <span>Sprayer System</span>
+        </a>
+        <a class="nav-item" [class.active]="activeTab === 'history'" (click)="setTab('history')">
+          <span class="nav-icon">📜</span>
+          <span>Detection History</span>
+        </a>
+        <a class="nav-item" [class.active]="activeTab === 'dataset'" (click)="setTab('dataset')">
+          <span class="nav-icon">📁</span>
+          <span>Dataset Info</span>
+        </a>
+        <a class="nav-item" [class.active]="activeTab === 'analytics'" (click)="setTab('analytics')">
+          <span class="nav-icon">📈</span>
+          <span>Analytics & Reports</span>
+        </a>
+        <a class="nav-item" [class.active]="activeTab === 'disease-info'" (click)="setTab('disease-info')">
+          <span class="nav-icon">📖</span>
+          <span>Disease Guide</span>
+        </a>
+        <a class="nav-item" [class.active]="activeTab === 'settings'" (click)="setTab('settings')">
+          <span class="nav-icon">⚙️</span>
+          <span>Settings</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="device-meta">
+          <small>ID: {{ status?.device_id || 'agrirover-pi4' }}</small>
+          <small>Model: MobileNetV2 (96.01%)</small>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Content Workspace -->
+    <main class="content-area">
+
+      <!-- ======================================================== -->
+      <!-- TAB 1: DASHBOARD -->
+      <!-- ======================================================== -->
+      <section *ngIf="activeTab === 'dashboard'" class="tab-pane animate-fade">
+        <div class="section-header">
+          <h2>Precision Farming Overview</h2>
+          <button class="btn btn-outline" (click)="refreshAllData()">🔄 Refresh Live Data</button>
+        </div>
+
+        <!-- Metric KPI Cards -->
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-icon total">🌿</div>
+            <div class="kpi-details">
+              <span class="kpi-title">Total Leaf Scans</span>
+              <span class="kpi-value">{{ statistics?.total_detections || status?.total_detections || 0 }}</span>
+            </div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-icon healthy">✅</div>
+            <div class="kpi-details">
+              <span class="kpi-title">Healthy Leaves</span>
+              <span class="kpi-value">{{ statistics?.healthy_count || status?.healthy_count || 0 }}</span>
+            </div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-icon diseased">⚠️</div>
+            <div class="kpi-details">
+              <span class="kpi-title">Diseased Leaves</span>
+              <span class="kpi-value">{{ statistics?.diseased_count || status?.diseased_count || 0 }}</span>
+            </div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-icon obstacle" [ngClass]="obstacleStatus?.obstacle_detected ? 'hazard' : 'clear'">
+              🛡️
+            </div>
+            <div class="kpi-details">
+              <span class="kpi-title">Obstacle Distance</span>
+              <span class="kpi-value">
+                {{ obstacleStatus?.distance_cm !== null ? obstacleStatus?.distance_cm + ' cm' : 'Clear' }}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Live Subsystems Matrix -->
+        <div class="dashboard-grid">
+          <!-- Latest Detection Card -->
+          <div class="card glass-card">
+            <div class="card-header">
+              <h3>Latest AI Diagnosis</h3>
+              <span class="badge" [ngClass]="latestDetection?.predicted_disease === 'Healthy_Leaf' ? 'badge-success' : 'badge-danger'">
+                {{ latestDetection ? latestDetection.predicted_disease : 'No Data' }}
+              </span>
+            </div>
+            <div class="card-body">
+              <div class="latest-det-content" *ngIf="latestDetection; else noLatest">
+                <div class="det-image-frame">
+                  <img [src]="latestDetection.image_url ? (api.baseUrl$.getValue() + latestDetection.image_url) : 'public/favicon.ico'"
+                       alt="Latest leaf scan"
+                       (error)="$any($event.target).src = 'public/favicon.ico'" />
+                </div>
+                <div class="det-meta">
+                  <p><strong>Confidence:</strong> {{ latestDetection.confidence }}%</p>
+                  <p><strong>Timestamp:</strong> {{ latestDetection.timestamp | date:'medium' }}</p>
+                  <div class="rec-box">
+                    <strong>Treatment Guidance:</strong>
+                    <p>{{ latestDetection.recommendation }}</p>
+                  </div>
+                  <div class="det-actions" *ngIf="latestDetection.predicted_disease !== 'Healthy_Leaf'">
+                    <button class="btn btn-primary" (click)="promptSpray(latestDetection.predicted_disease)">
+                      💧 Treat with Sprayer
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <ng-template #noLatest>
+                <div class="empty-state">
+                  <p>No leaf scans performed yet. Click below to capture.</p>
+                  <button class="btn btn-primary" (click)="captureImage()">📸 Capture Now</button>
+                </div>
+              </ng-template>
+            </div>
+          </div>
+
+          <!-- Hardware Subsystem Quick Panel -->
+          <div class="card glass-card">
+            <div class="card-header">
+              <h3>Rover Hardware Matrix</h3>
+              <span class="badge badge-info">{{ status?.rover?.mode || 'MANUAL' }} MODE</span>
+            </div>
+            <div class="card-body">
+              <ul class="subsystem-list">
+                <li class="subsystem-item">
+                  <span class="item-name">📷 Camera Module</span>
+                  <span class="item-badge" [ngClass]="status?.camera?.camera_connected ? 'badge-success' : 'badge-warning'">
+                    {{ status?.camera?.camera_connected ? 'Connected (' + status?.camera?.camera_type + ')' : 'Hardware Not Detected' }}
+                  </span>
+                </li>
+                <li class="subsystem-item">
+                  <span class="item-name">🚗 Motor Driver</span>
+                  <span class="item-badge" [ngClass]="status?.rover?.motor_status?.hardware_enabled ? 'badge-success' : 'badge-info'">
+                    {{ status?.rover?.motor_status?.hardware_enabled ? 'Hardware Active' : 'Simulation Mode' }}
+                  </span>
+                </li>
+                <li class="subsystem-item">
+                  <span class="item-name">📡 Ultrasonic Sensor</span>
+                  <span class="item-badge" [ngClass]="obstacleStatus?.obstacle_detected ? 'badge-danger' : 'badge-success'">
+                    {{ obstacleStatus?.distance_cm !== null ? obstacleStatus?.distance_cm + ' cm (' + obstacleStatus?.hazard_level + ')' : 'Clear' }}
+                  </span>
+                </li>
+                <li class="subsystem-item">
+                  <span class="item-name">💧 Relay Sprayer</span>
+                  <span class="item-badge" [ngClass]="sprayerActive ? 'badge-danger' : 'badge-success'">
+                    {{ sprayerActive ? 'PUMP ACTIVE' : 'PUMP OFF' }}
+                  </span>
+                </li>
+                <li class="subsystem-item">
+                  <span class="item-name">☁️ Cloud Synchronization</span>
+                  <span class="item-badge" [ngClass]="status?.sync?.online ? 'badge-success' : 'badge-secondary'">
+                    {{ status?.sync?.online ? 'Online' : 'Local SQLite Cache' }}
+                  </span>
+                </li>
+              </ul>
+
+              <div class="quick-controls">
+                <button class="btn btn-outline" (click)="setTab('rover')">🕹️ Steering Controls</button>
+                <button class="btn btn-outline" (click)="setTab('camera')">📸 Camera Feed</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================================================== -->
+      <!-- TAB 2: CAMERA & DISEASE DETECTION -->
+      <!-- ======================================================== -->
+      <section *ngIf="activeTab === 'camera'" class="tab-pane animate-fade">
+        <div class="section-header">
+          <h2>Leaf Camera & Real-Time AI Detection</h2>
+          <div class="header-actions">
+            <button class="btn btn-primary" (click)="captureImage()">📸 Capture & Classify</button>
+            <label class="btn btn-outline file-upload-label">
+              📁 Upload Image
+              <input type="file" (change)="onFileUpload($event)" accept="image/*" style="display:none;" />
+            </label>
+          </div>
+        </div>
+
+        <div class="camera-grid">
+          <!-- Camera Viewport Card -->
+          <div class="card glass-card">
+            <div class="card-header">
+              <h3>Camera Viewport</h3>
+              <span class="badge" [ngClass]="status?.camera?.camera_connected ? 'badge-success' : 'badge-warning'">
+                {{ status?.camera?.camera_connected ? status?.camera?.camera_type : 'Hardware Disconnected' }}
+              </span>
+            </div>
+            <div class="card-body camera-display">
+              <div class="feed-wrapper" *ngIf="latestDetection; else noFeed">
+                <img [src]="latestDetection.image_url ? (api.baseUrl$.getValue() + latestDetection.image_url) : 'public/favicon.ico'"
+                     alt="Leaf Feed"
+                     class="feed-img"
+                     (error)="$any($event.target).src = 'public/favicon.ico'" />
+                <div class="feed-overlay">
+                  <span class="badge badge-dark">Timestamp: {{ latestDetection.timestamp | date:'shortTime' }}</span>
+                </div>
+              </div>
+              <ng-template #noFeed>
+                <div class="camera-empty-box">
+                  <span class="camera-icon">📷</span>
+                  <p>No image captured yet.</p>
+                  <p class="small-text">{{ status?.camera?.error_message || 'Click Capture to take a leaf snapshot.' }}</p>
+                </div>
+              </ng-template>
+            </div>
+          </div>
+
+          <!-- Classification Output Card -->
+          <div class="card glass-card">
+            <div class="card-header">
+              <h3>AI Disease Classification</h3>
+              <span class="badge badge-primary">TensorFlow Lite</span>
+            </div>
+            <div class="card-body">
+              <div *ngIf="latestDetection; else noDetInfo">
+                <div class="diagnosis-header">
+                  <h4 [ngClass]="latestDetection.predicted_disease === 'Healthy_Leaf' ? 'text-healthy' : 'text-danger'">
+                    {{ latestDetection.predicted_disease }}
+                  </h4>
+                  <div class="confidence-bar-wrapper">
+                    <div class="confidence-label">
+                      <span>Confidence Score:</span>
+                      <strong>{{ latestDetection.confidence }}%</strong>
+                    </div>
+                    <div class="progress-track">
+                      <div class="progress-fill" [style.width.%]="latestDetection.confidence"
+                           [ngClass]="latestDetection.confidence >= 80 ? 'fill-high' : 'fill-med'"></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="treatment-box">
+                  <h5>Agricultural Treatment Recommendation</h5>
+                  <p class="rec-text">{{ latestDetection.recommendation }}</p>
+                </div>
+
+                <div class="action-row" *ngIf="latestDetection.predicted_disease !== 'Healthy_Leaf'">
+                  <button class="btn btn-primary" (click)="promptSpray(latestDetection.predicted_disease)">
+                    💧 Trigger Prescribed Spray
+                  </button>
+                  <button class="btn btn-outline" (click)="setTab('disease-info')">
+                    📖 Read Treatment Guide
+                  </button>
+                </div>
+              </div>
+              <ng-template #noDetInfo>
+                <div class="empty-state">
+                  <p>Capture or upload a leaf photo to trigger the 4-class CNN classification.</p>
+                </div>
+              </ng-template>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================================================== -->
+      <!-- TAB 3: ROVER STEERING & MOVEMENT CONTROLS -->
+      <!-- ======================================================== -->
+      <section *ngIf="activeTab === 'rover'" class="tab-pane animate-fade">
+        <div class="section-header">
+          <h2>Rover Motor Steering & Collision Protection</h2>
+          <div class="mode-selector">
+            <button class="btn" [ngClass]="status?.rover?.mode === 'MANUAL' ? 'btn-primary' : 'btn-outline'"
+                    (click)="setRoverMode('MANUAL')">Manual</button>
+            <button class="btn" [ngClass]="status?.rover?.mode === 'ASSISTED' ? 'btn-primary' : 'btn-outline'"
+                    (click)="setRoverMode('ASSISTED')">Assisted</button>
+            <button class="btn" [ngClass]="status?.rover?.mode === 'AUTO' ? 'btn-primary' : 'btn-outline'"
+                    (click)="setRoverMode('AUTO')">Auto Monitor</button>
+          </div>
+        </div>
+
+        <div class="rover-layout">
+          <!-- Steering Directional Pad -->
+          <div class="card glass-card dpad-card">
+            <div class="card-header">
+              <h3>Directional Drive Controls</h3>
+              <span class="badge" [ngClass]="isMoving ? 'badge-success' : 'badge-secondary'">{{ activeMovement }}</span>
+            </div>
+            <div class="card-body dpad-container">
+              <div class="dpad-grid">
+                <div></div>
+                <button class="dpad-btn btn-up" (click)="sendRoverMove('FORWARD')"
+                        [disabled]="obstacleStatus?.safe_to_move_forward === false" title="Forward">
+                  ⬆️
+                </button>
+                <div></div>
+
+                <button class="dpad-btn btn-left" (click)="sendRoverMove('LEFT')" title="Turn Left">
+                  ⬅️
+                </button>
+                <button class="dpad-btn btn-stop" (click)="sendRoverMove('STOP')" title="Stop">
+                  ⏹️
+                </button>
+                <button class="dpad-btn btn-right" (click)="sendRoverMove('RIGHT')" title="Turn Right">
+                  ➡️
+                </button>
+
+                <div></div>
+                <button class="dpad-btn btn-down" (click)="sendRoverMove('BACKWARD')" title="Backward">
+                  ⬇️
+                </button>
+                <div></div>
+              </div>
+
+              <!-- Speed Controller -->
+              <div class="speed-slider-box">
+                <label>PWM Motor Speed: <strong>{{ roverSpeed }}%</strong></label>
+                <input type="range" min="30" max="100" [(ngModel)]="roverSpeed" class="range-slider" />
+              </div>
+
+              <!-- Hard E-Stop Button -->
+              <button class="btn btn-estop-large" (click)="emergencyStop()">
+                🛑 EMERGENCY HARD STOP
+              </button>
+            </div>
+          </div>
+
+          <!-- Obstacle Radar Display -->
+          <div class="card glass-card">
+            <div class="card-header">
+              <h3>Ultrasonic Obstacle Interlock</h3>
+              <span class="badge" [ngClass]="obstacleStatus?.obstacle_detected ? 'badge-danger' : 'badge-success'">
+                {{ obstacleStatus?.hazard_level || 'CLEAR' }}
+              </span>
+            </div>
+            <div class="card-body">
+              <div class="radar-display">
+                <div class="radar-circle outer"></div>
+                <div class="radar-circle middle" [class.active-hazard]="obstacleStatus?.distance_cm <= 25"></div>
+                <div class="radar-circle inner" [class.active-critical]="obstacleStatus?.distance_cm <= 15"></div>
+                <div class="radar-sweep"></div>
+                <div class="radar-rover-icon">🚜</div>
+              </div>
+
+              <div class="obstacle-metrics">
+                <p><strong>Distance to Nearest Obstacle:</strong>
+                  <span class="metric-val" [class.text-danger]="obstacleStatus?.obstacle_detected">
+                    {{ obstacleStatus?.distance_cm !== null ? obstacleStatus?.distance_cm + ' cm' : 'Clear (>400 cm)' }}
+                  </span>
+                </p>
+                <p><strong>Forward Drive Safety Interlock:</strong>
+                  <span [ngClass]="obstacleStatus?.safe_to_move_forward !== false ? 'text-healthy' : 'text-danger'">
+                    {{ obstacleStatus?.safe_to_move_forward !== false ? 'ALLOWED' : 'BLOCKED (Obstacle Too Close)' }}
+                  </span>
+                </p>
+                <p class="interlock-notice">
+                  * Hardware safety logic overrides forward drive commands automatically when an obstacle is within 25 cm.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================================================== -->
+      <!-- TAB 4: SENSOR TELEMETRY -->
+      <!-- ======================================================== -->
+      <section *ngIf="activeTab === 'sensors'" class="tab-pane animate-fade">
+        <div class="section-header">
+          <h2>Modular Sensor Telemetry</h2>
+          <button class="btn btn-outline" (click)="fetchSensors()">🔄 Poll Sensors</button>
+        </div>
+
+        <div class="sensors-grid">
+          <!-- Ultrasonic Card -->
+          <div class="card glass-card">
+            <div class="card-header">
+              <h3>Ultrasonic Distance (HC-SR04)</h3>
+              <span class="badge badge-success">Installed</span>
+            </div>
+            <div class="card-body">
+              <div class="sensor-value-box">
+                <span class="big-metric">{{ obstacleStatus?.distance_cm !== null ? obstacleStatus?.distance_cm : '--' }}</span>
+                <span class="metric-unit">cm</span>
+              </div>
+              <p><strong>Status:</strong> {{ telemetry?.sensors?.ultrasonic_distance?.status || 'Operational' }}</p>
+              <p><strong>Safety Buffer:</strong> 25.0 cm</p>
+              <p><strong>Critical Stop:</strong> 15.0 cm</p>
+            </div>
+          </div>
+
+          <!-- Soil Moisture Card -->
+          <div class="card glass-card">
+            <div class="card-header">
+              <h3>Soil Moisture Sensor</h3>
+              <span class="badge badge-secondary">Not Installed</span>
+            </div>
+            <div class="card-body">
+              <div class="sensor-value-box">
+                <span class="big-metric text-muted">N/A</span>
+                <span class="metric-unit">%</span>
+              </div>
+              <p><strong>Status:</strong> Not Installed</p>
+              <p class="small-text text-muted">Awaiting ADC/digital pin integration on physical rover.</p>
+            </div>
+          </div>
+
+          <!-- Ambient Environment Card -->
+          <div class="card glass-card">
+            <div class="card-header">
+              <h3>Temperature & Humidity (DHT11)</h3>
+              <span class="badge badge-secondary">Not Installed</span>
+            </div>
+            <div class="card-body">
+              <div class="sensor-value-box">
+                <span class="big-metric text-muted">N/A</span>
+                <span class="metric-unit">°C / %</span>
+              </div>
+              <p><strong>Status:</strong> Not Installed</p>
+              <p class="small-text text-muted">Awaiting physical DHT sensor confirmation on GPIO pin.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================================================== -->
+      <!-- TAB 5: SPRAYER SYSTEM -->
+      <!-- ======================================================== -->
+      <section *ngIf="activeTab === 'sprayer'" class="tab-pane animate-fade">
+        <div class="section-header">
+          <h2>Chemical Sprayer & Fertilizer Pump Controller</h2>
+        </div>
+
+        <div class="sprayer-layout">
+          <div class="card glass-card">
+            <div class="card-header">
+              <h3>Sprayer Relay Actuator</h3>
+              <span class="badge" [ngClass]="sprayerActive ? 'badge-danger' : 'badge-secondary'">
+                {{ sprayerActive ? 'PUMP RUNNING' : 'PUMP OFF' }}
+              </span>
+            </div>
+            <div class="card-body">
+              <div class="safety-banner">
+                <h4>⚠️ Chemical Application Safety Interlock</h4>
+                <p>
+                  Automatic spraying based purely on AI prediction is strictly forbidden to protect soil health and crop safety.
+                  All spray actuations require explicit operator authorization and are bounded by a hard auto-cutoff timeout.
+                </p>
+              </div>
+
+              <div class="spray-form">
+                <div class="form-group">
+                  <label>Spray Duration (seconds):</label>
+                  <input type="number" min="0.5" max="10.0" step="0.5" [(ngModel)]="sprayDuration" class="input-control" />
+                  <small>Default: 3.0 seconds (Safety Maximum: 10.0s)</small>
+                </div>
+
+                <div class="spray-buttons">
+                  <button class="btn btn-primary" (click)="promptSpray('Manual Actuation')" [disabled]="sprayerActive">
+                    💧 Authorize & Activate Sprayer
+                  </button>
+                  <button class="btn btn-outline" (click)="stopSprayer()" [disabled]="!sprayerActive">
+                    ⏹️ Stop Immediately
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Chemical Guidance Quick Reference -->
+          <div class="card glass-card">
+            <div class="card-header">
+              <h3>Approved Field Chemical Standards</h3>
+            </div>
+            <div class="card-body">
+              <ul class="chemical-list">
+                <li>
+                  <strong>Bacterial Spot:</strong> Copper Oxychloride 50% WP &#64; 2.5 g/L + Streptocycline &#64; 1 g/10 L.
+                </li>
+                <li>
+                  <strong>Cercospora Leaf Spot:</strong> Mancozeb 75% WP &#64; 2.5 g/L OR Chlorothalonil 75% WP &#64; 2.0 g/L.
+                </li>
+                <li>
+                  <strong>Curl Virus:</strong> Do NOT spray fungicides. Manage Whitefly vector with Neem oil (3-5 ml/L) or Diafenthiuron 50% WP &#64; 1.2 g/L.
+                </li>
+                <li>
+                  <strong>Healthy Leaves:</strong> Zero chemicals required. Continue regular scouting.
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================================================== -->
+      <!-- TAB 6: DETECTION HISTORY -->
+      <!-- ======================================================== -->
+      <section *ngIf="activeTab === 'history'" class="tab-pane animate-fade">
+        <div class="section-header">
+          <h2>Leaf Disease Detection History</h2>
+          <button class="btn btn-outline" (click)="fetchHistory()">🔄 Refresh History</button>
+        </div>
+
+        <!-- Filter Bar -->
+        <div class="filter-bar">
+          <div class="filter-item">
+            <label>Filter by Disease:</label>
+            <select [(ngModel)]="historyFilterDisease" (change)="fetchHistory()" class="select-control">
+              <option value="">All Categories</option>
+              <option value="Bacterial_Spot">Bacterial Spot</option>
+              <option value="Cercospora_Leaf_Spot">Cercospora Leaf Spot</option>
+              <option value="Curl_Virus">Curl Virus</option>
+              <option value="Healthy_Leaf">Healthy Leaf</option>
+            </select>
+          </div>
+
+          <div class="filter-item">
+            <label>Min Confidence (%):</label>
+            <input type="number" min="0" max="100" [(ngModel)]="historyMinConfidence" (input)="fetchHistory()" class="input-control" />
+          </div>
+        </div>
+
+        <!-- History Records Table -->
+        <div class="card glass-card table-card">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Thumbnail</th>
+                <th>Detection ID</th>
+                <th>Diagnosis</th>
+                <th>Confidence</th>
+                <th>Timestamp</th>
+                <th>Treatment Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let item of historyList">
+                <td>
+                  <img [src]="item.image_url ? (api.baseUrl$.getValue() + item.image_url) : 'public/favicon.ico'"
+                       alt="Leaf Crop"
+                       class="table-thumb"
+                       (error)="$any($event.target).src = 'public/favicon.ico'" />
+                </td>
+                <td><code>{{ item.detection_id }}</code></td>
+                <td>
+                  <span class="badge" [ngClass]="item.predicted_disease === 'Healthy_Leaf' ? 'badge-success' : 'badge-danger'">
+                    {{ item.predicted_disease }}
+                  </span>
+                </td>
+                <td><strong>{{ item.confidence }}%</strong></td>
+                <td>{{ item.timestamp | date:'short' }}</td>
+                <td>
+                  <small>{{ item.recommendation }}</small>
+                </td>
+              </tr>
+              <tr *ngIf="historyList.length === 0">
+                <td colspan="6" class="text-center text-muted">No detection records matching your filters.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ======================================================== -->
+      <!-- TAB 7: DATASET MANAGEMENT -->
+      <!-- ======================================================== -->
+      <section *ngIf="activeTab === 'dataset'" class="tab-pane animate-fade">
+        <div class="section-header">
+          <h2>Chili Leaf Disease Training Dataset</h2>
+          <span class="badge badge-primary">Total Images: {{ datasetInfo.totalImages }}</span>
+        </div>
+
+        <div class="dataset-grid">
+          <!-- Dataset Breakdown Table -->
+          <div class="card glass-card">
+            <div class="card-header">
+              <h3>Verified Image Distribution</h3>
+            </div>
+            <div class="card-body">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Category</th>
+                    <th>Folder</th>
+                    <th>Image Count</th>
+                    <th>Precision</th>
+                    <th>Recall</th>
+                    <th>F1-Score</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr *ngFor="let cat of datasetInfo.categories">
+                    <td><strong>{{ cat.name }}</strong></td>
+                    <td><code>{{ cat.folder }}</code></td>
+                    <td>{{ cat.count }}</td>
+                    <td>{{ cat.precision | number:'1.4-4' }}</td>
+                    <td>{{ cat.recall | number:'1.4-4' }}</td>
+                    <td>{{ cat.f1 | number:'1.4-4' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Model Specs Card -->
+          <div class="card glass-card">
+            <div class="card-header">
+              <h3>Trained CNN Model Specifications</h3>
+            </div>
+            <div class="card-body">
+              <ul class="spec-list">
+                <li><strong>Architecture:</strong> {{ datasetInfo.architecture }}</li>
+                <li><strong>Input Dimensions:</strong> {{ datasetInfo.inputShape }}</li>
+                <li><strong>Overall Test Accuracy:</strong> <span class="text-healthy">{{ datasetInfo.testAccuracy }}%</span></li>
+                <li><strong>Test Loss:</strong> {{ datasetInfo.testLoss }}</li>
+                <li><strong>Keras Model Size:</strong> {{ datasetInfo.kerasSizeMb }} MB</li>
+                <li><strong>TFLite Optimized Size:</strong> {{ datasetInfo.tfliteSizeMb }} MB (Raspberry Pi Edge Deployment)</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================================================== -->
+      <!-- TAB 8: ANALYTICS & REPORTS -->
+      <!-- ======================================================== -->
+      <section *ngIf="activeTab === 'analytics'" class="tab-pane animate-fade">
+        <div class="section-header">
+          <h2>Field Analytics & Reports</h2>
+          <button class="btn btn-primary" (click)="downloadCsv()">📥 Export CSV Report</button>
+        </div>
+
+        <div class="analytics-grid">
+          <div class="card glass-card">
+            <div class="card-header">
+              <h3>Disease Distribution Summary</h3>
+            </div>
+            <div class="card-body">
+              <div *ngIf="statistics?.disease_distribution; else noStats">
+                <div *ngFor="let item of statistics.disease_distribution | keyvalue" class="dist-row">
+                  <div class="dist-meta">
+                    <strong>{{ item.key }}</strong>
+                    <span>{{ $any(item.value).count }} scans (Avg: {{ $any(item.value).avg_confidence }}%)</span>
+                  </div>
+                  <div class="progress-track">
+                    <div class="progress-fill fill-primary"
+                         [style.width.%]="statistics.total_detections ? (($any(item.value).count / statistics.total_detections) * 100) : 0"></div>
+                  </div>
+                </div>
+              </div>
+              <ng-template #noStats>
+                <p class="text-muted">No analytics data recorded yet.</p>
+              </ng-template>
+            </div>
+          </div>
+
+          <div class="card glass-card">
+            <div class="card-header">
+              <h3>Health vs Disease Ratio</h3>
+            </div>
+            <div class="card-body ratio-box">
+              <div class="ratio-stat">
+                <span class="ratio-number text-healthy">{{ statistics?.healthy_count || 0 }}</span>
+                <span>Healthy Leaves</span>
+              </div>
+              <div class="ratio-stat">
+                <span class="ratio-number text-danger">{{ statistics?.diseased_count || 0 }}</span>
+                <span>Diseased Leaves</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================================================== -->
+      <!-- TAB 9: DISEASE ENCYCLOPEDIA & TREATMENT GUIDE -->
+      <!-- ======================================================== -->
+      <section *ngIf="activeTab === 'disease-info'" class="tab-pane animate-fade">
+        <div class="section-header">
+          <h2>Chili Leaf Disease Agronomic Encyclopedia</h2>
+        </div>
+
+        <div class="encyclopedia-grid">
+          <div *ngFor="let dis of diseaseInfoList" class="card glass-card enc-card">
+            <div class="card-header">
+              <h3>{{ dis.name }}</h3>
+              <span class="badge" [ngClass]="dis.category === 'Optimal Plant Health' ? 'badge-success' : 'badge-danger'">
+                {{ dis.category }}
+              </span>
+            </div>
+            <div class="card-body">
+              <p><strong>Scientific Name:</strong> <em>{{ dis.scientific_name }}</em></p>
+              <div class="enc-section">
+                <h5>Key Symptoms:</h5>
+                <ul>
+                  <li *ngFor="let sym of dis.symptoms">{{ sym }}</li>
+                </ul>
+              </div>
+              <div class="enc-section">
+                <h5>Causes & Spread:</h5>
+                <ul>
+                  <li *ngFor="let c of dis.causes">{{ c }}</li>
+                </ul>
+              </div>
+              <div class="enc-section" *ngIf="dis.chemical_treatment?.spray_name !== 'No chemical treatment needed'">
+                <h5>Approved Chemical Recommendation (India Standard):</h5>
+                <p><strong>Product:</strong> {{ dis.chemical_treatment?.spray_name }}</p>
+                <p><strong>Dosage:</strong> {{ dis.chemical_treatment?.dosage }}</p>
+                <p><strong>Pre-Harvest Interval (PHI):</strong> {{ dis.chemical_treatment?.pre_harvest_interval }}</p>
+              </div>
+              <div class="enc-section">
+                <h5>Organic & Cultural Management:</h5>
+                <p>{{ dis.biological_treatment }}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================================================== -->
+      <!-- TAB 10: SETTINGS -->
+      <!-- ======================================================== -->
+      <section *ngIf="activeTab === 'settings'" class="tab-pane animate-fade">
+        <div class="section-header">
+          <h2>System Configuration & Connection Settings</h2>
+        </div>
+
+        <div class="settings-grid">
+          <div class="card glass-card">
+            <div class="card-header">
+              <h3>API Connection Endpoint</h3>
+            </div>
+            <div class="card-body">
+              <div class="form-group">
+                <label>Target Backend Endpoint:</label>
+                <input type="text" [(ngModel)]="apiEndpoint" class="input-control" placeholder="http://localhost:5000" />
+              </div>
+
+              <div class="preset-buttons">
+                <button class="btn btn-outline" (click)="setApiPreset('local')">🖥️ Local Pi (http://localhost:5000)</button>
+                <button class="btn btn-outline" (click)="setApiPreset('render')">☁️ Render Cloud API</button>
+              </div>
+
+              <div class="form-actions">
+                <button class="btn btn-primary" (click)="applySettings()">Save & Connect</button>
+                <button class="btn btn-outline" (click)="triggerCloudSync()">🔄 Trigger Cloud Sync Now</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card glass-card">
+            <div class="card-header">
+              <h3>Threshold & Hardware Parameters</h3>
+            </div>
+            <div class="card-body">
+              <div class="form-group">
+                <label>AI Confidence Threshold: <strong>{{ confidenceThreshold }}%</strong></label>
+                <input type="range" min="50" max="95" [(ngModel)]="confidenceThreshold" class="range-slider" />
+              </div>
+
+              <div class="form-group">
+                <label>Obstacle Distance Threshold: <strong>{{ obstacleDistanceThreshold }} cm</strong></label>
+                <input type="range" min="15" max="50" [(ngModel)]="obstacleDistanceThreshold" class="range-slider" />
+              </div>
+
+              <div class="sys-info">
+                <p><strong>Device ID:</strong> {{ status?.device_id || 'agrirover-pi4-01' }}</p>
+                <p><strong>Hardware Architecture:</strong> ARM Cortex-A72 (Raspberry Pi 4B)</p>
+                <p><strong>Deployment Stack:</strong> Render Web Service + Static Site</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- Chemical Spray Confirmation Modal -->
+  <div class="modal-backdrop" *ngIf="showSprayConfirmModal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3>⚠️ Authorize Chemical Spray Actuation</h3>
+        <button class="modal-close" (click)="showSprayConfirmModal = false">✕</button>
+      </div>
+      <div class="modal-body">
+        <p>You are about to activate the rover sprayer for <strong>{{ sprayDuration }} seconds</strong>.</p>
+        <p><strong>Target Disease:</strong> {{ sprayTargetDisease }}</p>
+        <div class="safety-warning-box">
+          <p>Confirm that the rover is properly positioned over the infected plant and no bystanders or animals are nearby.</p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" (click)="showSprayConfirmModal = false">Cancel</button>
+        <button class="btn btn-danger" (click)="confirmSprayer()">Confirm & Spray</button>
+      </div>
+    </div>
+  </div>
+</div>

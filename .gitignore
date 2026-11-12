@@ -1,0 +1,36 @@
+# Python & Virtual Environments
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.log
+
+# Databases & Local Storage
+*.db
+*.sqlite3
+/Raspberry_Pi/captured_leaves/
+/Raspberry_Pi/rover_local.db
+/Website/backend/cloud_rover.db
+
+# Node.js & Angular
+node_modules/
+/Website/frontend/dist/
+.angular/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment Variables & Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Dataset (Kept local, do not push 6764 raw images to Git)
+Dataset/
+
+# OS Specific
+.DS_Store
+Thumbs.db
