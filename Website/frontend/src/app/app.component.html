@@ -147,6 +147,60 @@
 
         <!-- Live Subsystems Matrix -->
         <div class="dashboard-grid">
+          <!-- Live Camera & Command Center Card -->
+          <div class="card glass-card live-camera-card">
+            <div class="card-header">
+              <div class="card-title-group">
+                <h3>📹 Live Camera & Command Center</h3>
+                <span class="badge badge-live" *ngIf="liveStreamActive && !streamError">● LIVE CSI FEED (ov5647)</span>
+                <span class="badge badge-warning" *ngIf="streamError || !liveStreamActive">Feed Disconnected</span>
+              </div>
+              <div class="stream-actions">
+                <button class="btn btn-sm" [ngClass]="liveStreamActive ? 'btn-danger' : 'btn-primary'" (click)="toggleLiveStream()">
+                  {{ liveStreamActive ? '⏹ Pause Stream' : '▶ Start Stream' }}
+                </button>
+                <button class="btn btn-sm" [ngClass]="autoDetectEnabled ? 'btn-success' : 'btn-outline'" (click)="toggleAutoDetect()">
+                  🍃 Auto-Detect: {{ autoDetectEnabled ? 'ON' : 'OFF' }}
+                </button>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="live-stream-container">
+                <div class="stream-wrapper" *ngIf="liveStreamActive && !streamError; else streamPaused">
+                  <img [src]="liveStreamUrl" alt="Live Camera Feed with Leaf Detection" class="live-feed-img" (error)="onStreamError($event)" />
+                  <div class="stream-badge-overlay">
+                    <span class="tag green-tag">Leaf Tracking Active</span>
+                    <span class="tag">Picamera2 ov5647</span>
+                  </div>
+                </div>
+                <ng-template #streamPaused>
+                  <div class="camera-empty-box stream-offline-box">
+                    <span class="camera-icon">📷</span>
+                    <p><strong>Live Camera Feed Paused or Connecting</strong></p>
+                    <p class="small-text">MJPEG stream from Raspberry Pi Picamera2 (/api/camera/stream).</p>
+                    <button class="btn btn-primary btn-sm" (click)="toggleLiveStream()">▶ Connect Live Feed</button>
+                  </div>
+                </ng-template>
+              </div>
+
+              <!-- Quick Rover & Sprayer Command Bar -->
+              <div class="quick-command-bar">
+                <div class="quick-rover-buttons">
+                  <span class="bar-label">Drive:</span>
+                  <button class="btn btn-sm btn-outline" (click)="sendRoverMove('FORWARD')" title="Forward" [disabled]="obstacleStatus?.safe_to_move_forward === false">⬆️</button>
+                  <button class="btn btn-sm btn-outline" (click)="sendRoverMove('LEFT')" title="Left">⬅️</button>
+                  <button class="btn btn-sm btn-outline" (click)="sendRoverMove('RIGHT')" title="Right">➡️</button>
+                  <button class="btn btn-sm btn-outline" (click)="sendRoverMove('BACKWARD')" title="Backward">⬇️</button>
+                  <button class="btn btn-sm btn-warning" (click)="sendRoverMove('STOP')" title="Stop">⏹ Stop</button>
+                </div>
+                <div class="quick-sprayer-buttons">
+                  <button class="btn btn-sm btn-primary" (click)="captureImage()">📸 Capture & Classify</button>
+                  <button class="btn btn-sm btn-estop-nav" (click)="emergencyStop()">🛑 E-STOP</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- Latest Detection Card -->
           <div class="card glass-card">
             <div class="card-header">
@@ -241,6 +295,12 @@
         <div class="section-header">
           <h2>Leaf Camera & Real-Time AI Detection</h2>
           <div class="header-actions">
+            <button class="btn btn-sm" [ngClass]="liveStreamActive ? 'btn-danger' : 'btn-primary'" (click)="toggleLiveStream()">
+              {{ liveStreamActive ? '⏹ Pause Stream' : '▶ Start Stream' }}
+            </button>
+            <button class="btn btn-sm" [ngClass]="autoDetectEnabled ? 'btn-success' : 'btn-outline'" (click)="toggleAutoDetect()">
+              🍃 Auto-Detect: {{ autoDetectEnabled ? 'ON' : 'OFF' }}
+            </button>
             <button class="btn btn-primary" (click)="captureImage()">📸 Capture & Classify</button>
             <label class="btn btn-outline file-upload-label">
               📁 Upload Image
@@ -253,27 +313,44 @@
           <!-- Camera Viewport Card -->
           <div class="card glass-card">
             <div class="card-header">
-              <h3>Camera Viewport</h3>
-              <span class="badge" [ngClass]="status?.camera?.camera_connected ? 'badge-success' : 'badge-warning'">
-                {{ status?.camera?.camera_connected ? status?.camera?.camera_type : 'Hardware Disconnected' }}
-              </span>
+              <div class="card-title-group">
+                <h3>Camera Viewport</h3>
+                <span class="badge badge-live" *ngIf="liveStreamActive && !streamError">● LIVE CSI FEED (ov5647)</span>
+                <span class="badge" [ngClass]="status?.camera?.camera_connected ? 'badge-success' : 'badge-warning'" *ngIf="!liveStreamActive || streamError">
+                  {{ status?.camera?.camera_connected ? status?.camera?.camera_type : 'Hardware Disconnected' }}
+                </span>
+              </div>
+              <span class="badge badge-info" *ngIf="autoDetectEnabled">Auto-Detect: 3s</span>
             </div>
             <div class="card-body camera-display">
-              <div class="feed-wrapper" *ngIf="latestDetection; else noFeed">
-                <img [src]="latestDetection.image_url ? (api.baseUrl$.getValue() + latestDetection.image_url) : 'public/favicon.ico'"
-                     alt="Leaf Feed"
-                     class="feed-img"
-                     (error)="$any($event.target).src = 'public/favicon.ico'" />
+              <!-- Live MJPEG Stream -->
+              <div class="feed-wrapper" *ngIf="liveStreamActive && !streamError; else staticOrEmpty">
+                <img [src]="liveStreamUrl"
+                     alt="Raspberry Pi Live Camera Stream with Leaf Detection"
+                     class="feed-img live-mjpeg"
+                     (error)="onStreamError($event)" />
                 <div class="feed-overlay">
-                  <span class="badge badge-dark">Timestamp: {{ latestDetection.timestamp | date:'shortTime' }}</span>
+                  <span class="badge badge-dark">MJPEG Stream | Green Box Tracking Active</span>
                 </div>
               </div>
-              <ng-template #noFeed>
-                <div class="camera-empty-box">
-                  <span class="camera-icon">📷</span>
-                  <p>No image captured yet.</p>
-                  <p class="small-text">{{ status?.camera?.error_message || 'Click Capture to take a leaf snapshot.' }}</p>
+              <ng-template #staticOrEmpty>
+                <div class="feed-wrapper" *ngIf="latestDetection; else noFeed">
+                  <img [src]="latestDetection.image_url ? (api.baseUrl$.getValue() + latestDetection.image_url) : 'public/favicon.ico'"
+                       alt="Latest Captured Leaf"
+                       class="feed-img"
+                       (error)="$any($event.target).src = 'public/favicon.ico'" />
+                  <div class="feed-overlay">
+                    <span class="badge badge-dark">Snapshot: {{ latestDetection.timestamp | date:'shortTime' }}</span>
+                  </div>
                 </div>
+                <ng-template #noFeed>
+                  <div class="camera-empty-box">
+                    <span class="camera-icon">📷</span>
+                    <p>Live stream paused. No snapshot captured yet.</p>
+                    <p class="small-text">{{ status?.camera?.error_message || 'Click Capture to take a leaf snapshot.' }}</p>
+                    <button class="btn btn-primary btn-sm" (click)="toggleLiveStream()">▶ Resume Live Feed</button>
+                  </div>
+                </ng-template>
               </ng-template>
             </div>
           </div>

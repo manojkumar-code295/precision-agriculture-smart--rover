@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Plant Disease Detection AI
+Comment=Live AI Camera Tester for Plant Disease Detection
+Exec=/home/agrirover/Plant_Disease_Detection_AI/venv/bin/python /home/agrirover/Plant_Disease_Detection_AI/camera_tester.py
+Path=/home/agrirover/Plant_Disease_Detection_AI
+Icon=camera-video
+Terminal=false
+Categories=Application;Development;Science;
+StartupNotify=true

@@ -30,6 +30,40 @@ export class AppComponent implements OnInit, OnDestroy {
   isMoving: boolean = false;
   obstacleStatus: any = null;
 
+  // Live Camera Stream & Detection
+  liveStreamActive: boolean = true;
+  streamError: boolean = false;
+  autoDetectEnabled: boolean = true;
+  autoInterval: number = 3.0;
+  streamTimestamp: number = Date.now();
+
+  get liveStreamUrl(): string {
+    return `${this.api.getLiveStreamUrl()}?t=${this.streamTimestamp}`;
+  }
+
+  toggleLiveStream(): void {
+    this.liveStreamActive = !this.liveStreamActive;
+    if (this.liveStreamActive) {
+      this.streamError = false;
+      this.streamTimestamp = Date.now();
+    }
+  }
+
+  onStreamError(event: any): void {
+    console.warn('Live stream disconnected or awaiting connection:', event);
+    this.streamError = true;
+  }
+
+  toggleAutoDetect(): void {
+    this.autoDetectEnabled = !this.autoDetectEnabled;
+    this.api.setAutoDetect(this.autoDetectEnabled, this.autoInterval).subscribe({
+      next: (res) => {
+        this.showAlert(`Auto leaf detection set to ${this.autoDetectEnabled ? 'ON' : 'OFF'}`, 'info');
+      },
+      error: () => {}
+    });
+  }
+
   // Sprayer State
   sprayDuration: number = 3.0;
   sprayerActive: boolean = false;

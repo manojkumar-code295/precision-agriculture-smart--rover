@@ -12,7 +12,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, Response
 from flask_cors import CORS
 
 import config
@@ -43,11 +43,38 @@ CORS(app)
 logger.info("Initializing Smart Rover Subsystems...")
 db = RoverDatabase()
 classifier = LeafDiseaseClassifier()
-camera = RoverCamera()
+
+def handle_auto_capture(image_path: Path):
+    """Callback for automated capture when a chili leaf stabilizes in camera view."""
+    try:
+        logger.info(f"Running automated leaf classification on: {image_path.name}")
+        det_result = classifier.predict(image_path)
+        det_id = db.insert_detection({
+            "detection_id": det_result["detection_id"],
+            "timestamp": det_result["timestamp"],
+            "image_filename": det_result["image_filename"],
+            "image_path": str(image_path),
+            "predicted_disease": det_result["predicted_disease"],
+            "confidence": det_result["confidence"],
+            "is_low_confidence": det_result["is_low_confidence"],
+            "recommendation": det_result["recommendation"],
+            "sprayer_status": "OFF"
+        })
+        logger.info(f"Auto-capture result: {det_result['predicted_disease']} ({det_result['confidence']}%) [DB ID: {det_id}]")
+    except Exception as e:
+        logger.error(f"Auto-capture classification failed: {e}")
+
+camera = RoverCamera(on_auto_capture=handle_auto_capture)
 rover = RoverController()
 sensor_manager = SensorManager(ultrasonic=rover.obstacle_detector.sensor)
 sprayer = SprayerController()
-sync_service = CloudSyncService(db=db)
+sync_service = CloudSyncService(
+    db=db,
+    rover=rover,
+    camera=camera,
+    sprayer=sprayer,
+    sensor_manager=sensor_manager
+)
 
 # Start background sync
 sync_service.start()
@@ -140,6 +167,42 @@ def system_status():
 @app.route("/api/camera/status", methods=["GET"])
 def camera_status():
     return jsonify(camera.get_status())
+
+
+@app.route("/api/camera/stream", methods=["GET"])
+def camera_stream():
+    """Streams real-time MJPEG live video feed with active green leaf detection bounding-box overlays."""
+    def generate():
+        while True:
+            frame_bytes = camera.get_jpeg_frame()
+            if frame_bytes is not None:
+                yield (b"--frame\r\n"
+                       b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n")
+                time.sleep(0.035)
+            else:
+                time.sleep(0.05)
+
+    return Response(generate(), mimetype="multipart/x-mixed-replace; boundary=frame")
+
+
+@app.route("/api/camera/auto-detect", methods=["GET", "POST"])
+def auto_detect_control():
+    """Controls or queries automated chili leaf detection and capture."""
+    if request.method == "POST":
+        data = request.get_json(force=True, silent=True) or {}
+        if "enabled" in data:
+            camera.set_auto_detect(bool(data["enabled"]))
+        if "interval" in data:
+            camera.set_auto_interval(float(data["interval"]))
+        return jsonify({
+            "success": True,
+            "auto_detect_enabled": camera.auto_detect_enabled,
+            "auto_interval_sec": camera.auto_interval_sec
+        })
+    return jsonify({
+        "auto_detect_enabled": camera.auto_detect_enabled,
+        "auto_interval_sec": camera.auto_interval_sec
+    })
 
 
 @app.route("/api/camera/capture", methods=["POST"])
@@ -254,7 +317,7 @@ def detection_history():
 @app.route("/api/rover/move", methods=["POST"])
 def rover_move():
     data = request.get_json(force=True, silent=True) or {}
-    command = data.get("command", "").upper()
+    command = str(data.get("command") or data.get("direction") or "").upper()
     speed = data.get("speed", config.MOTOR_DEFAULT_SPEED)
 
     result = rover.execute_command(command, speed=int(speed))

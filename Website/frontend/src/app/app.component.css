@@ -645,3 +645,135 @@
   .status-pill.rover-pill { display: none; }
   .content-area { padding: 1rem; }
 }
+
+/* ======================================================== */
+/* Live Camera Streaming & Auto-Detect Controls */
+/* ======================================================== */
+.badge-live {
+  background: rgba(16, 185, 129, 0.25) !important;
+  color: #34d399 !important;
+  border: 1px solid rgba(16, 185, 129, 0.45);
+  animation: pulse-live 2s infinite ease-in-out;
+  font-weight: 600;
+}
+
+@keyframes pulse-live {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.75; }
+}
+
+.live-camera-card {
+  grid-column: span 1;
+}
+
+.card-title-group {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.header-actions-inline, .stream-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.btn-sm {
+  padding: 0.35rem 0.65rem;
+  font-size: 0.78rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.live-stream-container {
+  width: 100%;
+}
+
+.stream-wrapper {
+  position: relative;
+  width: 100%;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: #000;
+  border: 1px solid var(--card-border);
+  min-height: 240px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.live-feed-img, .live-mjpeg {
+  width: 100%;
+  max-height: 380px;
+  object-fit: contain;
+  display: block;
+}
+
+.stream-badge-overlay {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: flex;
+  gap: 6px;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.stream-badge-overlay .tag {
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(4px);
+  color: #f8fafc;
+  font-size: 0.72rem;
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.stream-badge-overlay .green-tag {
+  background: rgba(16, 185, 129, 0.85);
+  color: #064e3b;
+  font-weight: 700;
+  border-color: rgba(16, 185, 129, 0.9);
+}
+
+.stream-offline-box {
+  padding: 2.5rem 1rem;
+  text-align: center;
+  background: rgba(15, 23, 42, 0.4);
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--card-border);
+  width: 100%;
+}
+
+.quick-command-bar {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--card-border);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.quick-rover-buttons {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.quick-rover-buttons .bar-label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-right: 0.25rem;
+  font-weight: 600;
+}
+
+.quick-sprayer-buttons {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}

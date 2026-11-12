@@ -12,6 +12,7 @@ __pycache__/
 /Raspberry_Pi/captured_leaves/
 /Raspberry_Pi/rover_local.db
 /Website/backend/cloud_rover.db
+test_results/
 
 # Node.js & Angular
 node_modules/

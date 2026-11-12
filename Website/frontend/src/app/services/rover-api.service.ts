@@ -136,6 +136,18 @@ export class RoverApiService {
   }
 
   // 2. Camera & Detection
+  getLiveStreamUrl(): string {
+    return `${this.url}/api/camera/stream`;
+  }
+
+  setAutoDetect(enabled: boolean, interval: number = 3.0): Observable<any> {
+    return this.http.post<any>(`${this.url}/api/camera/auto-detect`, { enabled, interval });
+  }
+
+  getAutoDetect(): Observable<any> {
+    return this.http.get<any>(`${this.url}/api/camera/auto-detect`);
+  }
+
   captureLeaf(autoClassify: boolean = true): Observable<any> {
     return this.http.post<any>(`${this.url}/api/camera/capture?classify=${autoClassify}`, {});
   }

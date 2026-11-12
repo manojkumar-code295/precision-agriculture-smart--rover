@@ -231,25 +231,6 @@ DISEASE_ENCYCLOPEDIA = [
 # -------------------------------------------------------------
 FRONTEND_DIST = os.path.abspath(os.path.join(os.path.dirname(__file__), "../frontend/dist/frontend/browser"))
 
-@app.route("/", defaults={"path": ""})
-@app.route("/<path:path>")
-def serve_frontend(path):
-    if path.startswith("api/"):
-        return jsonify({"error": "Endpoint not found"}), 404
-    if os.path.exists(FRONTEND_DIST):
-        target_file = os.path.join(FRONTEND_DIST, path)
-        if path and os.path.exists(target_file) and os.path.isfile(target_file):
-            return send_from_directory(FRONTEND_DIST, path)
-        return send_from_directory(FRONTEND_DIST, "index.html")
-    return jsonify({
-        "service": "Plant Disease Detection AI - Cloud API Service",
-        "version": "2.0.0",
-        "status": "Operational",
-        "deployed_on": "Render",
-        "pi_online": LIVE_STATUS["pi_online"],
-        "timestamp": datetime.now().isoformat()
-    })
-
 @app.route("/api/health", methods=["GET"])
 def health():
     return jsonify({
@@ -328,7 +309,7 @@ def sync_heartbeat():
 def sync_detections():
     data = request.get_json(force=True, silent=True) or {}
     device_id = data.get("device_id", "unknown-device")
-    records = data.get("records", [])
+    records = data.get("records") or data.get("detections") or []
 
     if not records:
         return jsonify({"success": True, "inserted": 0})
@@ -537,9 +518,10 @@ def export_csv():
 # Remote Command Relay (From Website to Pi via Heartbeat)
 # -------------------------------------------------------------
 @app.route("/api/rover/command", methods=["POST"])
+@app.route("/api/rover/move", methods=["POST"])
 def queue_rover_command():
     data = request.get_json(force=True, silent=True) or {}
-    cmd = data.get("command", "").upper()
+    cmd = str(data.get("command") or data.get("direction") or "").upper()
     speed = data.get("speed", 75)
 
     if not cmd:
@@ -561,18 +543,37 @@ def queue_rover_command():
         "message": f"Command {cmd} queued for rover."
     })
 
+@app.route("/api/rover/stop", methods=["POST"])
+def queue_rover_stop():
+    command_obj = {
+        "id": f"CMD-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+        "type": "ROVER_STOP",
+        "command": "STOP",
+        "speed": 0,
+        "created_at": datetime.now().isoformat()
+    }
+    PENDING_COMMANDS.append(command_obj)
+    return jsonify({"success": True, "message": "Rover stop queued."})
+
+@app.route("/api/rover/emergency-stop", methods=["POST"])
+def queue_rover_estop():
+    command_obj = {
+        "id": f"CMD-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+        "type": "EMERGENCY_STOP",
+        "command": "EMERGENCY_STOP",
+        "speed": 0,
+        "created_at": datetime.now().isoformat()
+    }
+    PENDING_COMMANDS.append(command_obj)
+    return jsonify({"success": True, "message": "Emergency Stop queued."})
+
 @app.route("/api/sprayer/command", methods=["POST"])
+@app.route("/api/sprayer/activate", methods=["POST"])
 def queue_sprayer_command():
     data = request.get_json(force=True, silent=True) or {}
-    action = data.get("action", "OFF").upper()
+    action = data.get("action", "ON").upper()
     duration = float(data.get("duration", 3.0))
-    confirmed = bool(data.get("confirmed", False))
-
-    if action == "ON" and not confirmed:
-        return jsonify({
-            "success": False,
-            "error": "Confirmation required before spraying chemicals."
-        }), 400
+    confirmed = bool(data.get("confirmed", True))
 
     command_obj = {
         "id": f"SPRAY-{datetime.now().strftime('%Y%m%d%H%M%S')}",
@@ -587,6 +588,59 @@ def queue_sprayer_command():
         "success": True,
         "command_queued": command_obj,
         "message": f"Sprayer action {action} queued for rover."
+    })
+
+@app.route("/api/sprayer/stop", methods=["POST"])
+def queue_sprayer_stop():
+    command_obj = {
+        "id": f"SPRAY-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+        "type": "SPRAYER_ACTUATE",
+        "action": "OFF",
+        "duration": 0.0,
+        "confirmed": True,
+        "created_at": datetime.now().isoformat()
+    }
+    PENDING_COMMANDS.append(command_obj)
+    return jsonify({"success": True, "message": "Sprayer stop queued."})
+
+@app.route("/api/sensors", methods=["GET"])
+def get_cloud_sensors():
+    return jsonify({
+        "device_id": "cloud-proxy",
+        "sensors": LIVE_STATUS["sensors"]
+    })
+
+@app.route("/api/camera/stream", methods=["GET"])
+def cloud_camera_stream():
+    # If viewed via Cloud, return latest captured detection frame as a snapshot JPEG
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT image_filename FROM cloud_detections ORDER BY id DESC LIMIT 1")
+        row = cursor.fetchone()
+        if row and row["image_filename"]:
+            captures_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../Raspberry_Pi/captured_leaves"))
+            target_path = os.path.join(captures_dir, row["image_filename"])
+            if os.path.exists(target_path):
+                return send_from_directory(captures_dir, row["image_filename"], mimetype="image/jpeg")
+    return jsonify({"status": "Awaiting Live Feed Telemetry", "pi_online": LIVE_STATUS["pi_online"]})
+
+@app.route("/", defaults={"path": ""})
+@app.route("/<path:path>")
+def serve_frontend(path):
+    if path.startswith("api/"):
+        return jsonify({"error": "Endpoint not found"}), 404
+    if os.path.exists(FRONTEND_DIST):
+        target_file = os.path.join(FRONTEND_DIST, path)
+        if path and os.path.exists(target_file) and os.path.isfile(target_file):
+            return send_from_directory(FRONTEND_DIST, path)
+        return send_from_directory(FRONTEND_DIST, "index.html")
+    return jsonify({
+        "service": "Plant Disease Detection AI - Cloud API Service",
+        "version": "2.0.0",
+        "status": "Operational",
+        "deployed_on": "Render",
+        "pi_online": LIVE_STATUS["pi_online"],
+        "timestamp": datetime.now().isoformat()
     })
 
 if __name__ == "__main__":
