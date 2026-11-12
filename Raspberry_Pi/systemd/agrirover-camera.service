@@ -1,0 +1,23 @@
+[Unit]
+Description=AgriRover AI - Camera & Core Rover Hardware Service
+Documentation=https://github.com/manojkumar-code295/precision-agriculture-smart--rover
+After=network.target multi-user.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=agrirover
+Group=agrirover
+WorkingDirectory=/home/agrirover/Plant_Disease_Detection_AI/Raspberry_Pi
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/home/agrirover/Plant_Disease_Detection_AI/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/home/agrirover/Plant_Disease_Detection_AI/venv/bin/python /home/agrirover/Plant_Disease_Detection_AI/Raspberry_Pi/main.py
+Restart=always
+RestartSec=5s
+KillMode=mixed
+TimeoutStopSec=10s
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target
