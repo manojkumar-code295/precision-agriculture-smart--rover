@@ -435,39 +435,70 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   // -----------------------------------------------------------
-  // Sprayer System Controls
+  // Manual-Only Sprayer System Controls
   // -----------------------------------------------------------
-  promptSpray(diseaseName?: string): void {
-    this.sprayTargetDisease = diseaseName || (this.latestDetection ? this.latestDetection.predicted_disease : 'Manual Operation');
-    this.showSprayConfirmModal = true;
-  }
-
-  confirmSprayer(): void {
-    this.showSprayConfirmModal = false;
-    this.showAlert(`Actuating precision chemical sprayer for ${this.sprayDuration}s...`, 'warning');
-    this.api.activateSprayer(this.sprayDuration, true, { disease: this.sprayTargetDisease }).subscribe({
+  turnSprayerOn(duration?: number): void {
+    const dur = duration !== undefined ? duration : this.sprayDuration;
+    this.sprayerActive = true;
+    this.showAlert(`💦 Turning Sprayer ON (Manual Operator Mode - ${dur > 0 ? dur + 's' : 'Continuous'})...`, 'warning', 3000);
+    this.api.activateSprayer(dur, true, { mode: 'MANUAL', target: this.sprayTargetDisease || 'Manual Operation' }).subscribe({
       next: (res) => {
         if (res.success) {
           this.sprayerActive = true;
-          this.showAlert(`Sprayer actuated for ${this.sprayDuration}s.`, 'success');
-          setTimeout(() => {
-            this.sprayerActive = false;
-          }, this.sprayDuration * 1000);
+          this.showAlert(`✅ Sprayer Pump is now ACTIVE (ON)!`, 'success', 3000);
+          if (dur > 0) {
+            setTimeout(() => {
+              this.fetchLiveStatus();
+            }, (dur * 1000) + 300);
+          }
         } else {
-          this.showAlert(`Sprayer rejected: ${res.message}`, 'danger');
+          this.sprayerActive = false;
+          this.showAlert(`Sprayer error: ${res.message || 'Cannot activate pump'}`, 'danger');
         }
       },
       error: (err) => {
-        this.showAlert(`Sprayer error: ${err.message}`, 'danger');
+        this.sprayerActive = false;
+        this.showAlert(`Sprayer communication error: ${err.message}`, 'danger');
       }
     });
   }
 
-  stopSprayer(): void {
-    this.api.stopSprayer().subscribe(() => {
-      this.sprayerActive = false;
-      this.showAlert('Sprayer deactivated immediately.', 'info');
+  turnSprayerOff(): void {
+    this.sprayerActive = false;
+    this.showAlert('🛑 Turning Sprayer OFF...', 'info', 2000);
+    this.api.stopSprayer().subscribe({
+      next: (res) => {
+        this.sprayerActive = false;
+        this.showAlert('✅ Sprayer Pump is now OFF (Standby).', 'success', 2500);
+        this.fetchLiveStatus();
+      },
+      error: (err) => {
+        this.showAlert(`Sprayer stop error: ${err.message}`, 'danger');
+      }
     });
+  }
+
+  toggleManualSprayer(): void {
+    if (this.sprayerActive) {
+      this.turnSprayerOff();
+    } else {
+      this.turnSprayerOn();
+    }
+  }
+
+  promptSpray(diseaseName?: string): void {
+    this.sprayTargetDisease = diseaseName || (this.latestDetection ? this.latestDetection.predicted_disease : 'Manual Operation');
+    // Direct manual activation without blocking modals
+    this.turnSprayerOn(this.sprayDuration);
+  }
+
+  confirmSprayer(): void {
+    this.showSprayConfirmModal = false;
+    this.turnSprayerOn(this.sprayDuration);
+  }
+
+  stopSprayer(): void {
+    this.turnSprayerOff();
   }
 
   // -----------------------------------------------------------

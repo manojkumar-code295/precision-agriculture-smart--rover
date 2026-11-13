@@ -44,14 +44,31 @@ class RoverController:
             self._initialized = True
 
     def _start_watchdog(self):
-        """Monitors command timestamps and automatically halts motors on timeout."""
+        """Monitors command timestamps and continuously checks obstacle proximity during forward motion."""
         def watchdog_loop():
             while self.running:
+                # 1. Real-time active obstacle detection and automatic rover stop
+                if self.is_moving and self.driver.current_state == "FORWARD":
+                    try:
+                        obs = self.obstacle_detector.check_obstacle()
+                        if obs.get("obstacle_detected") or not obs.get("safe_to_move_forward"):
+                            dist = obs.get("distance_cm")
+                            logger.warning(
+                                f"AUTOMATIC OBSTACLE BRAKE ACTIVATED: Object detected at {dist} cm "
+                                f"(Safety threshold: {self.obstacle_detector.safety_distance} cm). "
+                                "Halting rover immediately!"
+                            )
+                            self.driver.stop()
+                            self.is_moving = False
+                    except Exception as e:
+                        logger.error(f"Error in obstacle collision watchdog: {e}")
+
+                # 2. Watchdog timeout for manual teleoperation safety
                 if self.is_moving and self.mode == "MANUAL":
                     if time.time() - self.last_command_time > config.MOTOR_COMMAND_TIMEOUT:
                         logger.info("Watchdog timeout reached: Auto-stopping rover motors.")
                         self.stop()
-                time.sleep(0.2)
+                time.sleep(0.08)
 
         self.watchdog_thread = threading.Thread(target=watchdog_loop, daemon=True)
         self.watchdog_thread.start()

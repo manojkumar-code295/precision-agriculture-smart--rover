@@ -337,15 +337,50 @@
                 <p class="rec-text">{{ latestDetection.recommendation }}</p>
               </div>
 
-              <!-- Action Button Row -->
-              <div class="diagnosis-actions">
-                <button
-                  class="btn btn-warning btn-block"
-                  [disabled]="!latestDetection.leaf_detected || latestDetection.predicted_disease === 'Healthy_Leaf' || latestDetection.is_low_confidence"
-                  (click)="promptSpray(latestDetection.predicted_disease)">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v6"/><path d="M12 18v4"/><path d="M4.93 4.93l4.24 4.24"/><path d="M14.83 14.83l4.24 4.24"/><path d="M2 12h6"/><path d="M18 12h4"/><path d="M4.93 19.07l4.24-4.24"/><path d="M14.83 9.17l4.24-4.24"/></svg>
-                  <span>Actuate Precision Sprayer ({{ sprayDuration }}s)</span>
-                </button>
+              <!-- Manual Sprayer Control Pod (100% Manual Operator Mode) -->
+              <div class="manual-sprayer-pod">
+                <div class="sprayer-pod-header">
+                  <div class="sprayer-pod-title">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><path d="M12 2v6"/><path d="M12 18v4"/><path d="M4.93 4.93l4.24 4.24"/><path d="M14.83 14.83l4.24 4.24"/><path d="M2 12h6"/><path d="M18 12h4"/></svg>
+                    <span>Manual Sprayer Control</span>
+                  </div>
+                  <span class="sprayer-live-pill" [class.active]="sprayerActive">
+                    <span class="sprayer-dot" [class.pulsing]="sprayerActive"></span>
+                    {{ sprayerActive ? 'PUMP ACTIVE (ON)' : 'PUMP OFF (STANDBY)' }}
+                  </span>
+                </div>
+
+                <div class="sprayer-dual-btn-row">
+                  <button
+                    class="btn btn-spray-on"
+                    [class.active-glow]="sprayerActive"
+                    (click)="turnSprayerOn()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                    <span>SPRAYER ON</span>
+                  </button>
+
+                  <button
+                    class="btn btn-spray-off"
+                    [class.active-glow]="!sprayerActive"
+                    (click)="turnSprayerOff()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    <span>SPRAYER OFF</span>
+                  </button>
+                </div>
+
+                <div class="sprayer-options-row">
+                  <div class="duration-mini-wrap">
+                    <span class="opt-label">Pulse Duration:</span>
+                    <select [(ngModel)]="sprayDuration" class="form-select form-select-sm">
+                      <option [ngValue]="1.0">1.0s Pulse</option>
+                      <option [ngValue]="2.0">2.0s Pulse</option>
+                      <option [ngValue]="3.0">3.0s Standard</option>
+                      <option [ngValue]="5.0">5.0s Intensive</option>
+                      <option [ngValue]="0">Continuous Manual</option>
+                    </select>
+                  </div>
+                  <span class="manual-mode-tag">🔒 100% Manual • Auto-Spray Disabled</span>
+                </div>
               </div>
             </div>
 
@@ -486,42 +521,63 @@
                 <span class="hud-fps-pill">{{ liveFpsDisplay > 0 ? liveFpsDisplay + ' FPS' : (api.isCloudMode() ? 'Render Stream' : 'MJPEG') }}</span>
               </div>
 
-              <!-- Obstacle Radar HUD Overlay -->
-              <div class="radar-hud-tag" [ngClass]="(status?.rover?.obstacle_status?.distance_cm || 100) < 20 ? 'radar-hazard' : 'radar-clear'">
+              <!-- Obstacle Radar HUD Overlay with Real-time Auto-Stop Alert -->
+              <div class="radar-hud-tag" [ngClass]="(status?.rover?.obstacle_status?.distance_cm || 400) <= 30 ? 'radar-hazard' : 'radar-clear'">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
-                <span>FRONT DISTANCE: {{ status?.rover?.obstacle_status?.distance_cm ? status?.rover?.obstacle_status?.distance_cm + ' CM' : 'CLEAR (>40 CM)' }}</span>
+                <span *ngIf="(status?.rover?.obstacle_status?.distance_cm || 400) <= 30">
+                  ⚠️ OBSTACLE {{ status?.rover?.obstacle_status?.distance_cm }} CM • AUTO-STOP ACTIVE
+                </span>
+                <span *ngIf="(status?.rover?.obstacle_status?.distance_cm || 400) > 30">
+                  RADAR: {{ ((status?.rover?.obstacle_status?.distance_cm || 400) < 400) ? (status?.rover?.obstacle_status?.distance_cm + ' CM') : 'CLEAR (>40 CM)' }} • AUTO-BRAKE ARMED
+                </span>
               </div>
             </div>
 
-            <!-- Precision Chemical Sprayer Control Panel -->
+            <!-- Precision Chemical Sprayer Control Panel (100% Manual Operator Control) -->
             <div class="sprayer-control-section">
               <div class="sprayer-header">
                 <div class="sprayer-title">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><path d="M12 2v6"/><path d="M12 18v4"/><path d="M4.93 4.93l4.24 4.24"/><path d="M14.83 14.83l4.24 4.24"/><path d="M2 12h6"/><path d="M18 12h4"/></svg>
-                  <h4>Precision Chemical Sprayer Relay</h4>
+                  <div>
+                    <h4>Precision Chemical Sprayer (Manual Relay)</h4>
+                    <span class="sprayer-sub-label">100% Manual Operator Control • GPIO 26</span>
+                  </div>
                 </div>
-                <span class="badge" [ngClass]="sprayerActive ? 'badge-warning' : 'badge-neutral'">
-                  {{ sprayerActive ? 'PUMP ACTIVE' : 'RELAY STANDBY' }}
+                <span class="sprayer-live-pill" [class.active]="sprayerActive">
+                  <span class="sprayer-dot" [class.pulsing]="sprayerActive"></span>
+                  {{ sprayerActive ? 'PUMP ACTIVE (ON)' : 'PUMP OFF (STANDBY)' }}
                 </span>
               </div>
 
               <div class="sprayer-controls-row">
+                <div class="sprayer-dual-actions">
+                  <button
+                    class="btn btn-spray-on"
+                    [class.active-glow]="sprayerActive"
+                    (click)="turnSprayerOn()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                    <span>SPRAYER ON</span>
+                  </button>
+
+                  <button
+                    class="btn btn-spray-off"
+                    [class.active-glow]="!sprayerActive"
+                    (click)="turnSprayerOff()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    <span>SPRAYER OFF</span>
+                  </button>
+                </div>
+
                 <div class="duration-select-wrap">
-                  <label class="input-label">Duration:</label>
-                  <select [(ngModel)]="sprayDuration" class="form-select">
+                  <label class="input-label">Pulse Duration:</label>
+                  <select [(ngModel)]="sprayDuration" class="form-select form-select-sm">
                     <option [ngValue]="1.0">1.0 Second</option>
                     <option [ngValue]="2.0">2.0 Seconds</option>
                     <option [ngValue]="3.0">3.0 Seconds (Standard)</option>
                     <option [ngValue]="5.0">5.0 Seconds (Intensive)</option>
+                    <option [ngValue]="0">Continuous Manual</option>
                   </select>
                 </div>
-
-                <button class="btn btn-warning" [disabled]="sprayerActive" (click)="promptSpray('Manual Actuation')">
-                  Actuate Sprayer ({{ sprayDuration }}s)
-                </button>
-                <button class="btn btn-secondary" *ngIf="sprayerActive" (click)="stopSprayer()">
-                  Cancel Spray
-                </button>
               </div>
             </div>
           </div>

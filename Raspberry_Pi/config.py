@@ -37,8 +37,8 @@ DEVICE_ID = os.getenv("DEVICE_ID", "agrirover-pi4-01")
 DEVICE_NAME = os.getenv("DEVICE_NAME", "Precision Smart Rover Pi4")
 
 # Hardware Pin Verification Flag
-# GPIO pins will not physically drive outputs until confirmed by the user
-GPIO_HARDWARE_ENABLED = os.getenv("GPIO_HARDWARE_ENABLED", "false").lower() in ("1", "true", "yes")
+# Enabled by default for active rover operation, with simulation fallback if pins are unconfigured
+GPIO_HARDWARE_ENABLED = os.getenv("GPIO_HARDWARE_ENABLED", "true").lower() in ("1", "true", "yes")
 
 # Motor Driver Pin Mapping (BCM Numbers)
 # Standard L298N / L293D dual H-bridge motor driver interface
@@ -57,20 +57,22 @@ MOTOR_DEFAULT_SPEED = int(os.getenv("MOTOR_DEFAULT_SPEED", "75"))  # 0 to 100%
 MOTOR_COMMAND_TIMEOUT = float(os.getenv("MOTOR_COMMAND_TIMEOUT", "1.5"))  # Seconds before auto-stop
 
 # Ultrasonic Sensor Configuration (HC-SR04)
-# Note: ECHO output must use a voltage divider (e.g. 1k + 2k resistors) to convert 5V to 3.3V
+# TRIG: BCM 5 (Physical pin 29)
+# ECHO: BCM 6 (Physical pin 31)
 ULTRASONIC_PINS = {
     "TRIG": int(os.getenv("ULTRASONIC_TRIG", "5")),
     "ECHO": int(os.getenv("ULTRASONIC_ECHO", "6")),
 }
-ULTRASONIC_ENABLED = os.getenv("ULTRASONIC_ENABLED", "false").lower() in ("1", "true", "yes")
-OBSTACLE_SAFETY_DISTANCE_CM = float(os.getenv("OBSTACLE_SAFETY_DISTANCE_CM", "25.0"))
-CRITICAL_STOP_DISTANCE_CM = float(os.getenv("CRITICAL_STOP_DISTANCE_CM", "15.0"))
+ULTRASONIC_ENABLED = os.getenv("ULTRASONIC_ENABLED", "true").lower() in ("1", "true", "yes")
+OBSTACLE_SAFETY_DISTANCE_CM = float(os.getenv("OBSTACLE_SAFETY_DISTANCE_CM", "30.0"))
+CRITICAL_STOP_DISTANCE_CM = float(os.getenv("CRITICAL_STOP_DISTANCE_CM", "18.0"))
 
 # Sprayer Relay Configuration
+# Relays connected on GPIO 26 (Physical pin 37)
 SPRAYER_PIN = int(os.getenv("SPRAYER_PIN", "26"))
-SPRAYER_ENABLED = os.getenv("SPRAYER_ENABLED", "false").lower() in ("1", "true", "yes")
+SPRAYER_ENABLED = os.getenv("SPRAYER_ENABLED", "true").lower() in ("1", "true", "yes")
 DEFAULT_SPRAY_DURATION_SEC = float(os.getenv("DEFAULT_SPRAY_DURATION_SEC", "3.0"))
-MAX_SPRAY_DURATION_SEC = 10.0  # Absolute safety hard limit
+MAX_SPRAY_DURATION_SEC = 30.0  # Safe manual cutoff limit
 
 # Other Optional Sensors (Soil moisture, Temperature, Humidity)
 # Default to NOT INSTALLED unless physically present and verified

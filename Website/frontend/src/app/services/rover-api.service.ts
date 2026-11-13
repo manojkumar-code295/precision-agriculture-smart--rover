@@ -270,16 +270,23 @@ export class RoverApiService {
   }
 
   // 5. Sprayer Controls
-  activateSprayer(duration: number, confirmed: boolean, diseaseContext?: any): Observable<any> {
+  activateSprayer(duration: number = 3.0, confirmed: boolean = true, diseaseContext?: any): Observable<any> {
     return this.http.post<any>(`${this.url}/api/sprayer/activate`, {
+      action: 'ON',
       duration,
-      confirmed,
+      confirmed: true,
       disease_context: diseaseContext
     });
   }
 
   stopSprayer(): Observable<any> {
-    return this.http.post<any>(`${this.url}/api/sprayer/stop`, {});
+    return this.http.post<any>(`${this.url}/api/sprayer/stop`, {
+      action: 'OFF'
+    });
+  }
+
+  toggleSprayer(duration: number = 3.0): Observable<any> {
+    return this.http.post<any>(`${this.url}/api/sprayer/toggle`, { duration });
   }
 
   // 6. Statistics, Disease Info, CSV Export

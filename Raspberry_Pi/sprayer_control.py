@@ -61,46 +61,32 @@ class SprayerController:
             self.enabled = False
 
     def activate_spray(self, duration_sec: Optional[float] = None,
-                       user_confirmed: bool = False,
+                       user_confirmed: bool = True,
                        disease_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        Activates sprayer for a strictly bounded duration.
-        SAFETY REQUIREMENT: Explicit user confirmation is strictly mandatory.
+        Manually activates chemical sprayer relay.
+        Allows timed pulses (e.g. 1-10s) or continuous manual spraying until turned OFF.
         """
         with self._lock:
-            if not user_confirmed:
-                return {
-                    "success": False,
-                    "sprayer_active": False,
-                    "reason": "CONFIRMATION_REQUIRED",
-                    "message": "Spraying chemical treatments requires explicit user authorization and safety confirmation."
-                }
-
-            if self.is_spraying:
-                return {
-                    "success": False,
-                    "sprayer_active": True,
-                    "reason": "ALREADY_ACTIVE",
-                    "message": "Sprayer pump is currently operating."
-                }
-
-            # Enforce strict duration bounds
-            duration = duration_sec if duration_sec is not None else config.DEFAULT_SPRAY_DURATION_SEC
-            duration = max(0.5, min(duration, config.MAX_SPRAY_DURATION_SEC))
-
-            logger.info(f"Activating sprayer pump for {duration:.1f} seconds. Disease: {disease_context.get('disease') if disease_context else 'Manual'}")
-
-            # Turn ON relay
+            # Turn ON relay hardware
             if self.enabled and self.relay:
                 self.relay.on()
 
             self.is_spraying = True
             self.last_spray_time = datetime.now().isoformat()
 
-            # Automatic cutoff timer thread
+            # Handle duration
+            duration = float(duration_sec) if duration_sec is not None else config.DEFAULT_SPRAY_DURATION_SEC
+
+            # Automatic safety cutoff timer (never leave relay active indefinitely)
+            cutoff_duration = min(duration if duration > 0 else config.MAX_SPRAY_DURATION_SEC, config.MAX_SPRAY_DURATION_SEC)
+            logger.info(f"Sprayer pump ON (Duration limit: {cutoff_duration:.1f}s). Context: {disease_context}")
+
             def auto_cutoff():
-                time.sleep(duration)
-                self.stop_spray()
+                time.sleep(cutoff_duration)
+                if self.is_spraying:
+                    logger.info("Sprayer reached safety duration limit. Stopping pump.")
+                    self.stop_spray()
 
             self.spray_timer = threading.Thread(target=auto_cutoff, daemon=True)
             self.spray_timer.start()
@@ -110,7 +96,7 @@ class SprayerController:
                 "sprayer_active": True,
                 "duration_seconds": duration,
                 "timestamp": self.last_spray_time,
-                "message": f"Sprayer activated for {duration} seconds."
+                "message": f"Sprayer pump turned ON (Duration: {duration}s)."
             }
 
     def stop_spray(self):
@@ -118,6 +104,13 @@ class SprayerController:
         with self._lock:
             if self.enabled and self.relay:
                 self.relay.off()
+            self.is_spraying = False
+            logger.info("Sprayer pump OFF.")
+            return {
+                "success": True,
+                "sprayer_active": False,
+                "message": "Sprayer pump turned OFF."
+            }
 
             self.is_spraying = False
             logger.info("Sprayer pump OFF.")

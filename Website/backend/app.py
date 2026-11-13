@@ -690,7 +690,7 @@ def set_cloud_rover_mode():
 @app.route("/api/sprayer/activate", methods=["POST"])
 def queue_sprayer_command():
     data = request.get_json(force=True, silent=True) or {}
-    action = data.get("action", "ON").upper()
+    action = str(data.get("action", "ON")).upper()
     duration = float(data.get("duration", 3.0))
     confirmed = bool(data.get("confirmed", True))
 
@@ -703,10 +703,17 @@ def queue_sprayer_command():
         "created_at": datetime.now().isoformat()
     }
     PENDING_COMMANDS.append(command_obj)
+    is_active = (action == "ON")
+    LIVE_STATUS["sprayer"]["sprayer_active"] = is_active
+    if is_active:
+        LIVE_STATUS["sprayer"]["last_activated"] = datetime.now().isoformat()
+
+    logger.info(f"Queued sprayer manual action: {action} (duration: {duration}s)")
     return jsonify({
         "success": True,
+        "sprayer_active": is_active,
         "command_queued": command_obj,
-        "message": f"Sprayer action {action} queued for rover."
+        "message": f"Sprayer turned {action} successfully."
     })
 
 @app.route("/api/sprayer/stop", methods=["POST"])
@@ -720,7 +727,31 @@ def queue_sprayer_stop():
         "created_at": datetime.now().isoformat()
     }
     PENDING_COMMANDS.append(command_obj)
-    return jsonify({"success": True, "message": "Sprayer stop queued."})
+    LIVE_STATUS["sprayer"]["sprayer_active"] = False
+    logger.info("Queued sprayer manual stop command.")
+    return jsonify({"success": True, "sprayer_active": False, "message": "Sprayer turned OFF."})
+
+@app.route("/api/sprayer/toggle", methods=["POST"])
+def queue_sprayer_toggle():
+    current_active = LIVE_STATUS["sprayer"].get("sprayer_active", False)
+    new_action = "OFF" if current_active else "ON"
+    data = request.get_json(force=True, silent=True) or {}
+    duration = float(data.get("duration", 3.0))
+
+    command_obj = {
+        "id": f"SPRAY-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+        "type": "SPRAYER_ACTUATE",
+        "action": new_action,
+        "duration": duration if new_action == "ON" else 0.0,
+        "confirmed": True,
+        "created_at": datetime.now().isoformat()
+    }
+    PENDING_COMMANDS.append(command_obj)
+    is_active = (new_action == "ON")
+    LIVE_STATUS["sprayer"]["sprayer_active"] = is_active
+    if is_active:
+        LIVE_STATUS["sprayer"]["last_activated"] = datetime.now().isoformat()
+    return jsonify({"success": True, "sprayer_active": is_active, "action": new_action})
 
 @app.route("/api/sensors", methods=["GET"])
 def get_cloud_sensors():
