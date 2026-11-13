@@ -1,11 +1,12 @@
 """
 Precision Agriculture Smart Rover - Cloud API Service (Render Web Service)
 Central cloud REST API for receiving telemetry from Raspberry Pi, persisting detection
-records, generating analytics, and serving the Angular web dashboard.
+records, generating analytics, serving the Angular web dashboard, and running AI diagnosis.
 """
 
 import os
 import sys
+import time
 import sqlite3
 import csv
 import io
@@ -15,6 +16,14 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 from flask import Flask, request, jsonify, Response, send_from_directory
 from flask_cors import CORS
+from PIL import Image
+
+# Ensure local backend modules are on path
+BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+if BACKEND_DIR not in sys.path:
+    sys.path.insert(0, BACKEND_DIR)
+
+from ai_engine import CloudAIEngine
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,23 +33,36 @@ logger = logging.getLogger("CloudAPI")
 
 app = Flask(__name__)
 application = app
-# Enable CORS for all origins so Angular frontend on Render Static Site can connect seamlessly
+# Enable CORS for all origins
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 # Configuration
-DB_PATH = os.getenv("CLOUD_DB_PATH", "cloud_rover.db")
+DB_PATH = os.getenv("CLOUD_DB_PATH", os.path.join(BACKEND_DIR, "cloud_rover.db"))
 API_KEY = os.getenv("ROVER_API_KEY", "smartrover_secure_key_2026")
-PI_HEARTBEAT_TIMEOUT_SEC = int(os.getenv("PI_HEARTBEAT_TIMEOUT_SEC", "60"))
+PI_HEARTBEAT_TIMEOUT_SEC = int(os.getenv("PI_HEARTBEAT_TIMEOUT_SEC", "15"))
+
+cloud_ai = CloudAIEngine()
 
 # In-memory heartbeat cache for live status
 LIVE_STATUS = {
     "last_seen": None,
     "pi_online": False,
+    "device_id": "agrirover-pi4-01",
+    "device_name": "Precision Smart Rover Pi4",
     "camera": {
         "camera_connected": False,
+        "status": "INTERRUPTED",
         "camera_type": "Awaiting Telemetry",
+        "live_fps": 0.0,
         "last_capture": None,
         "error_message": None
+    },
+    "ai": {
+        "status": "RUNNING",
+        "model_version": "2.1.0-Edge",
+        "architecture": "MobileNetV2 CNN",
+        "input_shape": "160x160x3",
+        "classes": ["Bacterial_Spot", "Cercospora_Leaf_Spot", "Curl_Virus", "Healthy_Leaf"]
     },
     "rover": {
         "mode": "MANUAL",
@@ -231,6 +253,13 @@ DISEASE_ENCYCLOPEDIA = [
 # -------------------------------------------------------------
 FRONTEND_DIST = os.path.abspath(os.path.join(os.path.dirname(__file__), "../frontend/dist/frontend/browser"))
 
+# Live In-Memory Camera Frame Buffer
+LATEST_LIVE_FRAME = {
+    "bytes": None,
+    "timestamp": None,
+    "device_id": None
+}
+
 @app.route("/api/health", methods=["GET"])
 def health():
     return jsonify({
@@ -243,7 +272,7 @@ def health():
 
 @app.route("/api/status", methods=["GET"])
 def cloud_status():
-    # Evaluate Pi connection status
+    # Evaluate Pi connection status using genuine heartbeat timestamp
     now = datetime.now()
     pi_online = False
     if LIVE_STATUS["last_seen"]:
@@ -255,6 +284,23 @@ def cloud_status():
 
     LIVE_STATUS["pi_online"] = pi_online
 
+    # Evaluate Camera Streaming status based on frame age
+    has_recent_frame = False
+    if LATEST_LIVE_FRAME["bytes"] is not None and LATEST_LIVE_FRAME["timestamp"]:
+        try:
+            frame_dt = datetime.fromisoformat(LATEST_LIVE_FRAME["timestamp"])
+            has_recent_frame = (now - frame_dt).total_seconds() <= 12.0
+        except Exception:
+            pass
+
+    cam_connected = LIVE_STATUS["camera"].get("camera_connected", False) and pi_online
+    camera_status_label = "STREAMING" if (has_recent_frame or (cam_connected and LIVE_STATUS["camera"].get("live_fps", 0) > 0)) else "INTERRUPTED"
+    LIVE_STATUS["camera"]["status"] = camera_status_label
+    LIVE_STATUS["camera"]["camera_connected"] = cam_connected
+
+    # Evaluate AI Engine status
+    ai_status_label = "RUNNING" if LIVE_STATUS["ai"].get("status") == "RUNNING" else "ERROR"
+
     # Fetch DB summary
     with get_db() as conn:
         cursor = conn.cursor()
@@ -265,9 +311,15 @@ def cloud_status():
         healthy_count = cursor.fetchone()["healthy"]
 
     return jsonify({
+        "device_id": LIVE_STATUS.get("device_id", "agrirover-pi4-01"),
+        "device_name": LIVE_STATUS.get("device_name", "Precision Smart Rover Pi4"),
         "pi_online": pi_online,
+        "pi_status": "ONLINE" if pi_online else "OFFLINE",
+        "camera_status": camera_status_label,
+        "ai_status": ai_status_label,
         "last_seen": LIVE_STATUS["last_seen"],
         "camera": LIVE_STATUS["camera"],
+        "ai": LIVE_STATUS["ai"],
         "rover": LIVE_STATUS["rover"],
         "sensors": LIVE_STATUS["sensors"],
         "sprayer": LIVE_STATUS["sprayer"],
@@ -287,7 +339,10 @@ def sync_heartbeat():
     LIVE_STATUS["last_seen"] = now_str
     LIVE_STATUS["pi_online"] = True
 
+    if "device_id" in data: LIVE_STATUS["device_id"] = data["device_id"]
+    if "device_name" in data: LIVE_STATUS["device_name"] = data["device_name"]
     if "camera" in data: LIVE_STATUS["camera"] = data["camera"]
+    if "ai" in data: LIVE_STATUS["ai"] = data["ai"]
     if "rover" in data: LIVE_STATUS["rover"] = data["rover"]
     if "sensors" in data: LIVE_STATUS["sensors"] = data["sensors"]
     if "sprayer" in data: LIVE_STATUS["sprayer"] = data["sprayer"]
@@ -308,7 +363,7 @@ def sync_heartbeat():
 @app.route("/api/sync/detections", methods=["POST"])
 def sync_detections():
     data = request.get_json(force=True, silent=True) or {}
-    device_id = data.get("device_id", "unknown-device")
+    device_id = data.get("device_id", "agrirover-pi4-01")
     records = data.get("records") or data.get("detections") or []
 
     if not records:
@@ -361,7 +416,7 @@ def sync_detections():
 @app.route("/api/sync/sensors", methods=["POST"])
 def sync_sensors():
     data = request.get_json(force=True, silent=True) or {}
-    device_id = data.get("device_id", "unknown-device")
+    device_id = data.get("device_id", "agrirover-pi4-01")
     records = data.get("records", [])
 
     now_str = datetime.now().isoformat()
@@ -389,6 +444,53 @@ def sync_sensors():
     LIVE_STATUS["last_seen"] = now_str
     LIVE_STATUS["pi_online"] = True
     return jsonify({"success": True, "count": len(records)})
+
+# -------------------------------------------------------------
+# AI Classification Route (Works on both Cloud and Pi)
+# -------------------------------------------------------------
+@app.route("/api/ai/classify", methods=["POST"])
+def api_ai_classify():
+    """Classifies an uploaded leaf image with genuine botanical verification."""
+    if "image" not in request.files:
+        return jsonify({"success": False, "error": "No image file provided"}), 400
+
+    file = request.files["image"]
+    if not file or file.filename == "":
+        return jsonify({"success": False, "error": "Empty filename"}), 400
+
+    try:
+        pil_img = Image.open(file.stream)
+        det_result = cloud_ai.classify_image(pil_img, filename=file.filename)
+
+        # Record in database if confirmed leaf or genuine observation
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO cloud_detections (
+                    detection_id, device_id, timestamp, image_filename,
+                    image_url, predicted_disease, confidence, is_low_confidence,
+                    recommendation, sprayer_status, synced_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                det_result["detection_id"],
+                "cloud-upload",
+                det_result["timestamp"],
+                file.filename,
+                "",
+                det_result["predicted_disease"],
+                float(det_result["confidence"]),
+                1 if det_result["is_low_confidence"] else 0,
+                det_result["recommendation"],
+                "OFF",
+                datetime.now().isoformat()
+            ))
+            conn.commit()
+            det_result["db_id"] = cursor.lastrowid
+
+        return jsonify({"success": True, "detection": det_result})
+    except Exception as e:
+        logger.error(f"Cloud AI classification error: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 # -------------------------------------------------------------
 # Frontend Consumption Endpoints
@@ -455,7 +557,7 @@ def get_statistics():
         distribution = {
             row["predicted_disease"]: {
                 "count": row["count"],
-                "avg_confidence": round(row["avg_conf"], 2)
+                "avg_confidence": round(row["avg_conf"], 2) if row["avg_conf"] is not None else 0.0
             } for row in cursor.fetchall()
         }
 
@@ -606,17 +708,13 @@ def queue_sprayer_stop():
 @app.route("/api/sensors", methods=["GET"])
 def get_cloud_sensors():
     return jsonify({
-        "device_id": "cloud-proxy",
+        "device_id": LIVE_STATUS.get("device_id", "agrirover-pi4-01"),
         "sensors": LIVE_STATUS["sensors"]
     })
 
-# Live In-Memory Camera Frame Buffer
-LATEST_LIVE_FRAME = {
-    "bytes": None,
-    "timestamp": None,
-    "device_id": None
-}
-
+# -------------------------------------------------------------
+# Camera Streaming & Frames
+# -------------------------------------------------------------
 @app.route("/api/camera/stream_frame", methods=["POST"])
 def api_camera_stream_frame():
     """Receives live camera JPEG frames sent from the Raspberry Pi rover."""
@@ -633,18 +731,20 @@ def api_camera_stream_frame():
         LATEST_LIVE_FRAME["device_id"] = request.headers.get("X-Device-ID", "agrirover-pi4-01")
         LIVE_STATUS["pi_online"] = True
         LIVE_STATUS["last_seen"] = LATEST_LIVE_FRAME["timestamp"]
+        LIVE_STATUS["camera"]["camera_connected"] = True
+        LIVE_STATUS["camera"]["status"] = "STREAMING"
         return jsonify({"success": True, "timestamp": LATEST_LIVE_FRAME["timestamp"]})
     return jsonify({"success": False, "error": "No frame data"}), 400
 
 @app.route("/api/camera/live_frame", methods=["GET"])
 def api_camera_live_frame():
-    """Returns the latest single camera frame as image/jpeg."""
+    """Returns the latest single camera frame as image/jpeg with zero caching."""
     if LATEST_LIVE_FRAME["bytes"] is not None:
         return Response(
             LATEST_LIVE_FRAME["bytes"],
             mimetype="image/jpeg",
             headers={
-                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
                 "Pragma": "no-cache",
                 "Expires": "0"
             }
@@ -656,20 +756,27 @@ def api_camera_live_frame():
         cursor.execute("SELECT image_filename FROM cloud_detections ORDER BY id DESC LIMIT 1")
         row = cursor.fetchone()
         if row and row["image_filename"]:
-            captures_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../Raspberry_Pi/captured_leaves"))
+            captures_dir = os.path.abspath(os.path.join(BACKEND_DIR, "../../Raspberry_Pi/captured_leaves"))
             target_path = os.path.join(captures_dir, row["image_filename"])
             if os.path.exists(target_path):
                 return send_from_directory(captures_dir, row["image_filename"], mimetype="image/jpeg")
 
-    # Responsive SVG standby placeholder to prevent black box
+    # Responsive SVG standby placeholder
     svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480" viewBox="0 0 640 480">
-        <rect width="640" height="480" fill="#071b12"/>
-        <circle cx="320" cy="200" r="44" fill="#0f2e20" stroke="#10b981" stroke-width="2"/>
-        <text x="320" y="210" font-family="Arial, sans-serif" font-size="28" text-anchor="middle" fill="#10b981">&#x1F4F7;</text>
-        <text x="320" y="280" font-family="Arial, sans-serif" font-size="18" font-weight="bold" text-anchor="middle" fill="#34d399">CAMERA STANDBY</text>
-        <text x="320" y="310" font-family="Arial, sans-serif" font-size="13" text-anchor="middle" fill="#94a3b8">Awaiting Live Transmission from Raspberry Pi 4B</text>
+        <rect width="640" height="480" fill="#05130b"/>
+        <circle cx="320" cy="200" r="48" fill="#092316" stroke="#10b981" stroke-width="2"/>
+        <path d="M305 185 h30 v30 h-30 z M300 215 l20 18 l20 -18" fill="none" stroke="#10b981" stroke-width="2"/>
+        <text x="320" y="278" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-size="18" font-weight="600" text-anchor="middle" fill="#34d399">CAMERA STANDBY</text>
+        <text x="320" y="306" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-size="13" text-anchor="middle" fill="#94a3b8">Awaiting Live Outbound Transmission from Raspberry Pi 4B</text>
     </svg>'''
-    return Response(svg, mimetype="image/svg+xml")
+    return Response(
+        svg,
+        mimetype="image/svg+xml",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache"
+        }
+    )
 
 @app.route("/api/camera/stream", methods=["GET"])
 @app.route("/video_feed", methods=["GET"])
@@ -678,35 +785,53 @@ def cloud_camera_stream():
     def generate_stream():
         last_yielded_ts = None
         while True:
-            if LATEST_LIVE_FRAME["bytes"] is not None and LATEST_LIVE_FRAME["timestamp"] != last_yielded_ts:
-                last_yielded_ts = LATEST_LIVE_FRAME["timestamp"]
-                yield (
-                    b"--frame\r\n"
-                    b"Content-Type: image/jpeg\r\n\r\n" + LATEST_LIVE_FRAME["bytes"] + b"\r\n"
-                )
-            time.sleep(0.08)  # Check at ~12 FPS for instant low-latency frame delivery
-    return Response(generate_stream(), mimetype="multipart/x-mixed-replace; boundary=frame")
+            try:
+                if LATEST_LIVE_FRAME["bytes"] is not None and LATEST_LIVE_FRAME["timestamp"] != last_yielded_ts:
+                    last_yielded_ts = LATEST_LIVE_FRAME["timestamp"]
+                    yield (
+                        b"--frame\r\n"
+                        b"Content-Type: image/jpeg\r\n\r\n" + LATEST_LIVE_FRAME["bytes"] + b"\r\n"
+                    )
+                time.sleep(0.08)  # Check at ~12 FPS
+            except (GeneratorExit, BrokenPipeError):
+                break
+            except Exception:
+                time.sleep(0.1)
+
+    return Response(
+        generate_stream(),
+        mimetype="multipart/x-mixed-replace; boundary=frame",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache"
+        }
+    )
 
 @app.route("/api/camera/status", methods=["GET"])
 def api_camera_status():
     """Returns camera live status, age, and online determination."""
+    now = datetime.now()
     has_frame = LATEST_LIVE_FRAME["bytes"] is not None
     age_seconds = None
     if has_frame and LATEST_LIVE_FRAME["timestamp"]:
         try:
-            diff = datetime.now() - datetime.fromisoformat(LATEST_LIVE_FRAME["timestamp"])
+            diff = now - datetime.fromisoformat(LATEST_LIVE_FRAME["timestamp"])
             age_seconds = diff.total_seconds()
         except Exception:
             pass
-    is_live = has_frame and age_seconds is not None and age_seconds < 15.0
+    is_live = has_frame and age_seconds is not None and age_seconds < 12.0
     return jsonify({
         "camera_online": is_live,
+        "status": "STREAMING" if is_live else "INTERRUPTED",
         "pi_connected": LIVE_STATUS["pi_online"],
         "last_frame_timestamp": LATEST_LIVE_FRAME["timestamp"],
         "last_frame_age_seconds": round(age_seconds, 1) if age_seconds is not None else None,
         "device_id": LATEST_LIVE_FRAME["device_id"] or "agrirover-pi4-01"
     })
 
+# -------------------------------------------------------------
+# Frontend Static Asset Serving (for Single-Container Deployment)
+# -------------------------------------------------------------
 @app.route("/", defaults={"path": ""})
 @app.route("/<path:path>")
 def serve_frontend(path):
@@ -718,8 +843,8 @@ def serve_frontend(path):
             return send_from_directory(FRONTEND_DIST, path)
         return send_from_directory(FRONTEND_DIST, "index.html")
     return jsonify({
-        "service": "Plant Disease Detection AI - Cloud API Service",
-        "version": "2.0.0",
+        "service": "Precision Agriculture Smart Rover - Cloud API Service",
+        "version": "2.1.0",
         "status": "Operational",
         "deployed_on": "Render",
         "pi_online": LIVE_STATUS["pi_online"],

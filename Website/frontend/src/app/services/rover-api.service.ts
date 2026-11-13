@@ -7,12 +7,31 @@ export interface SystemStatus {
   device_id: string;
   device_name: string;
   pi_online: boolean;
+  pi_status: 'ONLINE' | 'OFFLINE';
+  camera_status: 'STREAMING' | 'INTERRUPTED';
+  ai_status: 'RUNNING' | 'ERROR';
+  fps?: number;
+  battery?: {
+    percentage: number;
+    voltage: number;
+    status: string;
+  };
   last_seen?: string;
   camera: {
     camera_connected: boolean;
+    status?: 'STREAMING' | 'INTERRUPTED';
     camera_type: string;
+    live_fps?: number;
+    resolution?: string;
     last_capture: string | null;
     error_message: string | null;
+  };
+  ai?: {
+    status: 'RUNNING' | 'ERROR';
+    model_version: string;
+    architecture: string;
+    input_shape: string;
+    classes: string[];
   };
   rover: {
     mode: string;
@@ -32,7 +51,7 @@ export interface SystemStatus {
   };
   sensors: {
     timestamp?: string;
-    sensors: {
+    sensors?: {
       [key: string]: {
         name: string;
         installed: boolean;
@@ -43,6 +62,7 @@ export interface SystemStatus {
         error?: string | null;
       };
     };
+    [key: string]: any;
   };
   sprayer: {
     sprayer_active: boolean;
@@ -78,13 +98,14 @@ export interface DetectionRecord {
   recommendation: string;
   sprayer_status: string;
   synced_at?: string;
+  device_id?: string;
 }
 
 @Injectable({
   providedIn: 'root'
 })
 export class RoverApiService {
-  private defaultApiUrl = 'http://localhost:5000';
+  private defaultCloudUrl = 'https://precision-agriculture-smart-rover-5xxg.onrender.com';
   private apiUrlKey = 'rover_api_endpoint';
   public baseUrl$ = new BehaviorSubject<string>(this.getStoredApiUrl());
   public liveStatus$ = new BehaviorSubject<SystemStatus | null>(null);
@@ -95,17 +116,29 @@ export class RoverApiService {
     if (typeof window !== 'undefined' && window.localStorage) {
       const stored = window.localStorage.getItem(this.apiUrlKey);
       if (stored) return stored;
+
       if (window.location && window.location.hostname) {
         const host = window.location.hostname;
+        const port = window.location.port;
+
+        // If running directly on Render or behind web proxy
         if (host.includes('onrender.com')) {
-          return 'https://precision-agriculture-smart-rover.onrender.com';
+          return window.location.origin;
         }
-        if (host !== 'localhost' && host !== '127.0.0.1') {
-          return `http://${host}:5000`;
+
+        // If accessing local Pi or desktop
+        if (host === 'localhost' || host === '127.0.0.1') {
+          if (port === '5001' || port === '5000') {
+            return window.location.origin;
+          }
+          return 'http://localhost:5001';
         }
+
+        // LAN access (e.g. agrirover.local or 192.168.x.x)
+        return `http://${host}:5001`;
       }
     }
-    return this.defaultApiUrl;
+    return this.defaultCloudUrl;
   }
 
   public setApiUrl(url: string): void {
@@ -116,39 +149,76 @@ export class RoverApiService {
     this.baseUrl$.next(cleanUrl);
   }
 
-  private get url(): string {
+  public get url(): string {
     return this.baseUrl$.getValue();
   }
 
-  // 1. Health & Status
+  public isCloudMode(): boolean {
+    return this.url.includes('onrender.com');
+  }
+
+  // 1. Health & Live Status
   getStatus(): Observable<SystemStatus> {
     return this.http.get<SystemStatus>(`${this.url}/api/status`).pipe(
-      tap(status => this.liveStatus$.next(status)),
+      tap(status => {
+        // Enforce consistent boolean status
+        if (!status.pi_status) {
+          status.pi_status = status.pi_online ? 'ONLINE' : 'OFFLINE';
+        }
+        if (!status.camera_status) {
+          const isCam = status.camera?.camera_connected || status.camera?.status === 'STREAMING';
+          status.camera_status = isCam ? 'STREAMING' : 'INTERRUPTED';
+        }
+        if (!status.ai_status) {
+          status.ai_status = status.ai?.status === 'RUNNING' ? 'RUNNING' : 'ERROR';
+        }
+        this.liveStatus$.next(status);
+      }),
       catchError(err => {
         console.warn('Status request failed:', err);
-        return of({
-          device_id: 'offline-rover',
-          device_name: 'Smart Rover (Reconnecting)',
+        const fallback: SystemStatus = {
+          device_id: 'agrirover-pi4-01',
+          device_name: 'Precision Smart Rover Pi4',
           pi_online: false,
-          camera: { camera_connected: false, camera_type: 'Offline', last_capture: null, error_message: 'Cannot reach rover API' },
-          rover: { mode: 'MANUAL', is_moving: false, motor_status: { state: 'STOPPED', speed: 0, hardware_enabled: false }, obstacle_status: { obstacle_detected: false, distance_cm: null, hazard_level: 'OFFLINE' } },
+          pi_status: 'OFFLINE',
+          camera_status: 'INTERRUPTED',
+          ai_status: 'ERROR',
+          fps: 0,
+          battery: { percentage: 0, voltage: 0, status: 'DISCONNECTED' },
+          camera: {
+            camera_connected: false,
+            status: 'INTERRUPTED',
+            camera_type: 'Offline',
+            live_fps: 0,
+            resolution: '640x480',
+            last_capture: null,
+            error_message: 'Cannot contact rover API'
+          },
+          ai: {
+            status: 'ERROR',
+            model_version: '2.1.0-Edge',
+            architecture: 'MobileNetV2 CNN',
+            input_shape: '160x160x3',
+            classes: ['Bacterial_Spot', 'Cercospora_Leaf_Spot', 'Curl_Virus', 'Healthy_Leaf']
+          },
+          rover: {
+            mode: 'MANUAL',
+            is_moving: false,
+            motor_status: { state: 'STOPPED', speed: 0, hardware_enabled: false },
+            obstacle_status: { obstacle_detected: false, distance_cm: null, hazard_level: 'OFFLINE' }
+          },
           sensors: { sensors: {} },
           sprayer: { sprayer_active: false, hardware_enabled: false, last_activated: null },
           timestamp: new Date().toISOString()
-        } as SystemStatus);
+        };
+        this.liveStatus$.next(fallback);
+        return of(fallback);
       })
     );
   }
 
-  // 2. Camera & Detection
-  isCloudMode(): boolean {
-    return this.url.includes('onrender.com') || this.url.includes(':5001');
-  }
-
+  // 2. Camera Streams & Frames
   getLiveStreamUrl(): string {
-    if (this.isCloudMode()) {
-      return `${this.url}/api/camera/live_frame`;
-    }
     return `${this.url}/api/camera/stream`;
   }
 
@@ -156,16 +226,12 @@ export class RoverApiService {
     return `${this.url}/api/camera/live_frame`;
   }
 
-  setAutoDetect(enabled: boolean, interval: number = 3.0): Observable<any> {
-    return this.http.post<any>(`${this.url}/api/camera/auto-detect`, { enabled, interval });
-  }
-
-  getAutoDetect(): Observable<any> {
-    return this.http.get<any>(`${this.url}/api/camera/auto-detect`);
-  }
-
   captureLeaf(autoClassify: boolean = true): Observable<any> {
     return this.http.post<any>(`${this.url}/api/camera/capture?classify=${autoClassify}`, {});
+  }
+
+  setAutoDetect(enabled: boolean, interval: number = 3.0): Observable<any> {
+    return this.http.post<any>(`${this.url}/api/camera/auto-detect`, { enabled, interval });
   }
 
   classifyUploadedLeaf(file: File): Observable<any> {
@@ -174,18 +240,19 @@ export class RoverApiService {
     return this.http.post<any>(`${this.url}/api/ai/classify`, formData);
   }
 
+  // 3. Detections & Data
   getLatestDetection(): Observable<any> {
     return this.http.get<any>(`${this.url}/api/detections/latest`);
   }
 
   getDetections(limit: number = 50, offset: number = 0, disease?: string, minConfidence?: number): Observable<any> {
     let params = new HttpParams().set('limit', limit).set('offset', offset);
-    if (disease) params = params.set('disease', disease);
-    if (minConfidence !== undefined) params = params.set('min_confidence', minConfidence);
+    if (disease && disease !== 'ALL') params = params.set('disease', disease);
+    if (minConfidence !== undefined && minConfidence > 0) params = params.set('min_confidence', minConfidence);
     return this.http.get<any>(`${this.url}/api/detections`, { params });
   }
 
-  // 3. Rover Control
+  // 4. Rover Controls
   moveRover(command: string, speed: number = 75): Observable<any> {
     return this.http.post<any>(`${this.url}/api/rover/move`, { command, speed });
   }
@@ -202,7 +269,7 @@ export class RoverApiService {
     return this.http.post<any>(`${this.url}/api/rover/mode`, { mode });
   }
 
-  // 4. Sprayer Control
+  // 5. Sprayer Controls
   activateSprayer(duration: number, confirmed: boolean, diseaseContext?: any): Observable<any> {
     return this.http.post<any>(`${this.url}/api/sprayer/activate`, {
       duration,
@@ -215,12 +282,7 @@ export class RoverApiService {
     return this.http.post<any>(`${this.url}/api/sprayer/stop`, {});
   }
 
-  // 5. Sensors & Telemetry
-  getSensors(): Observable<any> {
-    return this.http.get<any>(`${this.url}/api/sensors`);
-  }
-
-  // 6. Statistics & Reports
+  // 6. Statistics, Disease Info, CSV Export
   getStatistics(): Observable<any> {
     return this.http.get<any>(`${this.url}/api/statistics`);
   }
@@ -233,7 +295,6 @@ export class RoverApiService {
     return `${this.url}/api/reports/export.csv`;
   }
 
-  // 7. Cloud Sync
   triggerSync(): Observable<any> {
     return this.http.post<any>(`${this.url}/api/sync/trigger`, {});
   }

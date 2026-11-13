@@ -35,7 +35,7 @@ class DetectedLeaf:
 def comprehensive_leaf_verifier(img_bgr: np.ndarray) -> Tuple[bool, str, float, Dict[str, Any]]:
     """
     Botanical leaf vs non-plant verifier.
-    Distinguishes real leaves (healthy green, yellow chlorotic, diseased spotty, curly)
+    Distinguishes real chili leaves (healthy green, yellow chlorotic, diseased spotty, curly)
     from human hands/skin, walls, curtains, tables, clothes, and non-plant backgrounds.
 
     Returns:
@@ -45,17 +45,21 @@ def comprehensive_leaf_verifier(img_bgr: np.ndarray) -> Tuple[bool, str, float, 
         return False, "No Leaf Result / Invalid Frame", 0.0, {"reason": "Empty or corrupted frame"}
 
     h, w = img_bgr.shape[:2]
-    # Standardize scale for consistent feature extraction
-    scale_w, scale_h = 320, 240
-    frame = cv2.resize(img_bgr, (scale_w, scale_h))
+    if w < 24 or h < 24:
+        return False, "No Leaf Result / Object Too Small", 0.0, {"reason": "ROI dimensions too small"}
+
+    # Rescale to standard 240x240 for consistent spectral feature extraction
+    scale_size = (240, 240)
+    frame = cv2.resize(img_bgr, scale_size)
+    total_pixels = 240.0 * 240.0
 
     # 1. Illumination & Glare Check
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     mean_brightness = float(cv2.mean(gray)[0])
-    if mean_brightness < 18.0:
-        return False, "No Leaf Result / Insufficient Lighting", 0.0, {"reason": "Scene too dark"}
-    if mean_brightness > 252.0:
-        return False, "No Leaf Result / Overexposed Glare", 0.0, {"reason": "Overexposed glare"}
+    if mean_brightness < 16.0:
+        return False, "No Leaf Result / Insufficient Lighting", 0.0, {"reason": f"Scene too dark ({mean_brightness:.1f} < 16)"}
+    if mean_brightness > 251.0:
+        return False, "No Leaf Result / Overexposed Glare", 0.0, {"reason": f"Overexposed glare ({mean_brightness:.1f} > 251)"}
 
     b, g, r = cv2.split(frame.astype(np.float32))
 
@@ -64,20 +68,20 @@ def comprehensive_leaf_verifier(img_bgr: np.ndarray) -> Tuple[bool, str, float, 
     cr = ycrcb[:, :, 1]
     cb = ycrcb[:, :, 2]
 
-    # Skin color chromaticity box: Cr in [133, 173], Cb in [77, 127], R > G > B
+    # Skin chromaticity box: Cr in [133, 173], Cb in [77, 127], R > G > B, (R - G) > 8
     skin_pixels = (cr >= 133) & (cr <= 173) & (cb >= 77) & (cb <= 127) & (r > g) & (g > b) & ((r - g) > 8.0)
-    skin_ratio = float(np.mean(skin_pixels))
+    skin_ratio = float(np.sum(skin_pixels)) / total_pixels
 
-    if skin_ratio > 0.16:
+    if skin_ratio > 0.12:
         return False, "No Leaf Result / Human Hand Detected", 0.0, {
             "reason": f"Human skin/hand detected (skin_ratio={skin_ratio*100:.1f}%)",
-            "skin_ratio": skin_ratio
+            "skin_ratio": round(skin_ratio, 3)
         }
 
     # 3. Wall / Flat Featureless Surface Check
     lap_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
     edges = cv2.Canny(gray, 30, 100)
-    edge_density = float(np.mean(edges > 0))
+    edge_density = float(np.sum(edges > 0)) / total_pixels
 
     # 4. Curtain / Fabric Anisotropy Check (Directional fold gradients)
     sobel_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
@@ -86,59 +90,63 @@ def comprehensive_leaf_verifier(img_bgr: np.ndarray) -> Tuple[bool, str, float, 
     sum_y = float(np.sum(np.abs(sobel_y)))
     anisotropy = max(sum_x, sum_y) / (min(sum_x, sum_y) + 1e-5)
 
-    # 5. Botanical Pigment Signatures
+    # 5. Multi-spectral Botanical Pigments
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     h_channel = hsv[:, :, 0]
     s_channel = hsv[:, :, 1]
     v_channel = hsv[:, :, 2]
 
-    # A. Chlorophyll (Healthy and spotted green leaves)
-    # ExG = 2G - R - B; HSV green hue (25 <= H <= 92), S >= 30, V >= 40, G >= 40
+    # Excess Green Index (ExG = 2G - R - B)
     exg = (2.0 * g) - r - b
-    g_over_b = g / (b + 1e-4)
-    chlorophyll = (exg > 10.0) & (h_channel >= 25) & (h_channel <= 92) & (s_channel >= 30) & (v_channel >= 40) & (g > 40.0)
-    chlorophyll_ratio = float(np.mean(chlorophyll))
+    denom = (2.0 * g) + r + b + 1e-4
+    gli = exg / denom
 
-    # B. Carotenoid / Xanthophyll (Yellow chlorotic / senescent leaves)
-    yellow_hue = (h_channel >= 14) & (h_channel <= 40) & (s_channel >= 35) & (v_channel >= 45)
-    carotenoid = (r > 60.0) & (g > 50.0) & (b < 140.0) & (g_over_b >= 1.05) & yellow_hue
-    carotenoid_ratio = float(np.mean(carotenoid))
+    # Chlorophyll (Healthy and spotted green leaves)
+    # Green hue in [22, 95], S >= 20, V >= 25, G > R, ExG > 8.0
+    chlorophyll = (g > r) & (exg > 8.0) & (h_channel >= 22) & (h_channel <= 95) & (s_channel >= 20) & (v_channel >= 25) & (g > 32.0)
+    chlorophyll_ratio = float(np.sum(chlorophyll)) / total_pixels
 
-    # C. Necrotic Lesions (Brown spots with nearby plant tissue)
-    brown_hue = (h_channel >= 6) & (h_channel <= 25) & (s_channel >= 30) & (v_channel >= 20) & (v_channel <= 170)
-    brown_ratio = float(np.mean(brown_hue))
+    # Carotenoid / Xanthophyll (Yellow chlorotic / virus leaves)
+    yellow_hue = (h_channel >= 14) & (h_channel <= 42) & (s_channel >= 25) & (v_channel >= 35)
+    carotenoid = yellow_hue & (r > 45.0) & (g > 45.0) & (np.abs(r - g) < 40.0) & (b < 155.0) & (g >= (b * 0.95))
+    carotenoid_ratio = float(np.sum(carotenoid)) / total_pixels
 
-    # Total plant vegetative coverage
-    plant_mask = chlorophyll | carotenoid
-    plant_ratio = float(np.mean(plant_mask))
+    # Necrotic Lesions (Brown/necrotic spot tissue)
+    brown_hue = (h_channel >= 5) & (h_channel <= 25) & (s_channel >= 20) & (v_channel >= 20) & (v_channel <= 185)
+    brown_spots = brown_hue & (r > b) & ((r - b) > 6.0)
+    brown_ratio = float(np.sum(brown_spots)) / total_pixels
 
-    # Rejection: Curtain
-    if anisotropy > 3.6 and plant_ratio < 0.12:
+    plant_foliage_ratio = chlorophyll_ratio + carotenoid_ratio
+
+    # Rejection: Curtain / Fabric folds (natural leaves have isotropic branching veins with anisotropy <= 2.2)
+    if anisotropy > 3.2:
         return False, "No Leaf Result / Curtain Detected", 0.0, {
             "reason": f"Periodic fabric folds detected (anisotropy={anisotropy:.1f})",
-            "anisotropy": anisotropy
+            "anisotropy": round(anisotropy, 2)
         }
 
-    # Rejection: Wall or Table
-    if (lap_var < 15.0 and edge_density < 0.012) and plant_ratio < 0.08:
+    # Rejection: Wall or Flat Surface
+    if lap_var < 18.0 and edge_density < 0.020:
         return False, "No Leaf Result / Wall Detected", 0.0, {
-            "reason": f"Flat featureless wall detected (lap_var={lap_var:.1f})",
-            "lap_var": lap_var
+            "reason": f"Flat featureless surface detected (lap_var={lap_var:.1f})",
+            "lap_var": round(lap_var, 1)
         }
 
-    # Rejection: Non-plant background (furniture, clothes, table)
-    if plant_ratio < 0.04 and (plant_ratio + brown_ratio) < 0.06:
+    # Rejection: Non-plant background (furniture, clothes, table, carpet)
+    if plant_foliage_ratio < 0.08 and (plant_foliage_ratio + brown_ratio) < 0.10:
         return False, "No Leaf Result / Not a Plant", 0.0, {
-            "reason": f"No botanical foliage detected (plant_ratio={plant_ratio*100:.1f}%)",
-            "plant_ratio": plant_ratio
+            "reason": f"No botanical foliage detected (plant_ratio={plant_foliage_ratio*100:.1f}%)",
+            "plant_ratio": round(plant_foliage_ratio, 3)
         }
 
     # Passed Botanical Verification!
-    confidence = min(98.8, max(72.0, (plant_ratio * 140.0) + (chlorophyll_ratio * 35.0) + (carotenoid_ratio * 30.0)))
-    return True, "Plant / Leaf Detected", round(confidence, 1), {
-        "plant_ratio": round(plant_ratio, 3),
+    # Confidence scaled based on genuine pigment density
+    leaf_confidence = min(99.0, max(72.0, 70.0 + (chlorophyll_ratio * 32.0) + (carotenoid_ratio * 25.0)))
+    return True, "Plant / Leaf Detected", round(leaf_confidence, 1), {
+        "plant_ratio": round(plant_foliage_ratio, 3),
         "chlorophyll_ratio": round(chlorophyll_ratio, 3),
         "carotenoid_ratio": round(carotenoid_ratio, 3),
+        "brown_ratio": round(brown_ratio, 3),
         "skin_ratio": round(skin_ratio, 3),
         "lap_var": round(lap_var, 1)
     }
@@ -149,13 +157,13 @@ class ChiliLeafDetector:
 
     def __init__(
         self,
-        min_area_ratio: float = 0.02,    # Minimum 2% of frame area
-        max_area_ratio: float = 0.88,    # Maximum 88% of frame area
-        min_solidity: float = 0.45,      # Leaf blade contour compactness
-        min_aspect: float = 0.30,        # Width to height lower bound
-        max_aspect: float = 3.20,        # Width to height upper bound
-        blur_threshold: float = 40.0,    # Laplacian variance cutoff
-        min_brightness: float = 20.0,    # Minimum mean gray level
+        min_area_ratio: float = 0.03,    # Minimum 3% of frame area
+        max_area_ratio: float = 0.72,    # Maximum 72% of frame area (prevents full-frame lock)
+        min_solidity: float = 0.42,      # Leaf blade contour compactness
+        min_aspect: float = 0.28,        # Width to height lower bound
+        max_aspect: float = 3.40,        # Width to height upper bound
+        blur_threshold: float = 35.0,    # Laplacian variance cutoff
+        min_brightness: float = 18.0,    # Minimum mean gray level
         max_brightness: float = 250.0    # Maximum mean gray level
     ):
         self.min_area_ratio = min_area_ratio
@@ -182,7 +190,7 @@ class ChiliLeafDetector:
     def segment_vegetation(self, frame: np.ndarray) -> np.ndarray:
         """
         Extracts multi-spectral plant foliage mask:
-        - Chlorophyll band (ExG > 10 & HSV green)
+        - Chlorophyll band (ExG > 4 & HSV green)
         - Carotenoid yellow chlorosis band (HSV yellow & high R/G)
         - Rejects skin (R > G > B & YCbCr) and plain neutral backgrounds.
         """
@@ -190,7 +198,7 @@ class ChiliLeafDetector:
 
         # 1. Excess Green Index
         exg = (2.0 * g) - r - b
-        chlorophyll_mask = (exg > 8.0) & (g > 35.0)
+        chlorophyll_mask = (exg > 4.0) & (g > 32.0)
 
         # 2. HSV Green & Yellow Bands
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
@@ -198,14 +206,14 @@ class ChiliLeafDetector:
         s = hsv[:, :, 1]
         v = hsv[:, :, 2]
 
-        green_band = (h >= 24) & (h <= 95) & (s >= 25) & (v >= 35)
-        yellow_band = (h >= 14) & (h <= 38) & (s >= 35) & (v >= 45) & (r > 60.0) & (g > 50.0)
+        green_band = (h >= 20) & (h <= 98) & (s >= 20) & (v >= 30)
+        yellow_band = (h >= 12) & (h <= 45) & (s >= 25) & (v >= 40) & (r > 50.0) & (g > 45.0)
 
         # 3. Suppress Skin and Hands
         ycrcb = cv2.cvtColor(frame, cv2.COLOR_BGR2YCrCb)
         cr = ycrcb[:, :, 1]
         cb = ycrcb[:, :, 2]
-        skin_mask = (cr >= 133) & (cr <= 173) & (cb >= 77) & (cb <= 127) & (r > g) & (g > b)
+        skin_mask = (cr >= 133) & (cr <= 173) & (cb >= 77) & (cb <= 127) & (r > g) & (g > b) & ((r - g) > 8.0)
 
         # Combined foliage mask minus skin
         foliage = ((chlorophyll_mask & green_band) | yellow_band) & (~skin_mask)
@@ -233,7 +241,18 @@ class ChiliLeafDetector:
         candidates = []
         for cnt in contours:
             area = cv2.contourArea(cnt)
+            # Area bounds: must be between 3% and 72% of total frame area
             if area < (frame_area * self.min_area_ratio) or area > (frame_area * self.max_area_ratio):
+                continue
+
+            x, y, bw, bh = cv2.boundingRect(cnt)
+            if bw == 0 or bh == 0:
+                continue
+
+            # Strict guard against full-frame or border-filling false detections
+            if x <= 2 and y <= 2 and bw >= (w - 4) and bh >= (h - 4):
+                continue
+            if bw >= int(w * 0.94) or bh >= int(h * 0.94):
                 continue
 
             hull = cv2.convexHull(cnt)
@@ -242,10 +261,6 @@ class ChiliLeafDetector:
                 continue
 
             solidity = float(area) / hull_area
-            x, y, bw, bh = cv2.boundingRect(cnt)
-            if bw == 0 or bh == 0:
-                continue
-
             aspect = float(bw) / float(bh)
 
             # Validate typical lanceolate / ovate chili leaf morphology
@@ -275,7 +290,7 @@ class ChiliLeafDetector:
 class LeafTracker:
     """Tracks detected leaf bounding boxes across frames to verify stability before auto-capture."""
 
-    def __init__(self, stability_frames: int = 3, max_displacement_px: float = 30.0, cooldown_sec: float = 5.0):
+    def __init__(self, stability_frames: int = 3, max_displacement_px: float = 35.0, cooldown_sec: float = 5.0):
         self.stability_frames = stability_frames
         self.max_displacement_px = max_displacement_px
         self.cooldown_sec = cooldown_sec
@@ -418,7 +433,7 @@ def annotate_frame(
         # Draw main rectangle
         cv2.rectangle(canvas, (x, y), (x + bw, y + bh), box_color, 2)
 
-        # Draw stylish corner accents
+        # Draw corner accents
         corner_len = min(15, bw // 4, bh // 4)
         thickness = 3
         # Top-left
@@ -432,7 +447,7 @@ def annotate_frame(
         cv2.line(canvas, (x, y + bh), (x, y + bh - corner_len), box_color, thickness)
         # Bottom-right
         cv2.line(canvas, (x + bw, y + bh), (x + bw - corner_len, y + bh), box_color, thickness)
-        cv2.line(canvas, (x + bw, y + bh), (x + bw, y + bh - corner_len), box_color, thickness)
+        cv2.line(canvas, (x + bw, y + bh), (x + bw, y + corner_len), box_color, thickness)
 
         # Label Banner
         (tw, th), _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
@@ -453,17 +468,17 @@ def annotate_frame(
 
     # Top HUD Bar
     hud_bg_height = 32
-    cv2.rectangle(canvas, (0, 0), (w, hud_bg_height), (20, 25, 30), -1)
+    cv2.rectangle(canvas, (0, 0), (w, hud_bg_height), (10, 25, 18), -1)
 
     has_confirmed_leaf = any(l.status == "CONFIRMED_STABLE" for l in leaves)
     status_str = "PLANT / LEAF DETECTED" if has_confirmed_leaf else ("VERIFYING..." if leaves else "NO LEAF IN VIEW")
-    status_color = (0, 255, 0) if has_confirmed_leaf else ((0, 215, 255) if leaves else (180, 180, 180))
+    status_color = (0, 230, 0) if has_confirmed_leaf else ((0, 215, 255) if leaves else (160, 175, 165))
 
     hud_text = f"AGRIROVER AI | FPS: {fps:.1f} | 640x480 | Auto: {'ON' if auto_active else 'OFF'}"
-    cv2.putText(canvas, hud_text, (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 230, 230), 1, cv2.LINE_AA)
+    cv2.putText(canvas, hud_text, (10, 21), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (52, 211, 153), 1, cv2.LINE_AA)
 
     # Right side HUD status
-    cv2.putText(canvas, f"STATUS: {status_str}", (w - 230, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.42, status_color, 1, cv2.LINE_AA)
+    cv2.putText(canvas, f"STATUS: {status_str}", (w - 240, 21), cv2.FONT_HERSHEY_SIMPLEX, 0.42, status_color, 1, cv2.LINE_AA)
 
     # Quality warnings if any
     if quality_status not in ("OK", "GOOD_QUALITY"):

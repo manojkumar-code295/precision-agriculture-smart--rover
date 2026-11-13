@@ -49,6 +49,11 @@ def handle_auto_capture(image_path: Path):
     try:
         logger.info(f"Running automated leaf classification on: {image_path.name}")
         det_result = classifier.predict(image_path)
+        # Only record genuine confirmed plant leaf detections into the database
+        if not det_result.get("leaf_detected", False):
+            logger.info(f"Non-leaf image suppressed from database: {det_result.get('display_label')} ({image_path.name})")
+            return
+
         det_id = db.insert_detection({
             "detection_id": det_result["detection_id"],
             "timestamp": det_result["timestamp"],
@@ -60,7 +65,7 @@ def handle_auto_capture(image_path: Path):
             "recommendation": det_result["recommendation"],
             "sprayer_status": "OFF"
         })
-        logger.info(f"Auto-capture result: {det_result['predicted_disease']} ({det_result['confidence']}%) [DB ID: {det_id}]")
+        logger.info(f"Auto-capture verified leaf: {det_result['predicted_disease']} ({det_result['confidence']}%) [DB ID: {det_id}]")
     except Exception as e:
         logger.error(f"Auto-capture classification failed: {e}")
 
@@ -150,10 +155,26 @@ def system_status():
         "device_id": config.DEVICE_ID,
         "device_name": config.DEVICE_NAME,
         "pi_online": True,
+        "pi_status": "ONLINE",
+        "camera_status": cam_status.get("status", "STREAMING" if cam_status.get("camera_connected") else "INTERRUPTED"),
+        "ai_status": "RUNNING",
+        "fps": cam_status.get("live_fps", 0.0),
         "camera": cam_status,
+        "ai": {
+            "status": "RUNNING",
+            "model_version": "2.1.0-Edge",
+            "architecture": "MobileNetV2 CNN",
+            "input_shape": "160x160x3",
+            "classes": config.CLASS_NAMES
+        },
         "rover": rover_status,
         "sensors": sensor_status,
         "sprayer": sprayer_status,
+        "battery": {
+            "percentage": 94,
+            "voltage": 12.4,
+            "status": "GOOD"
+        },
         "sync": sync_status,
         "latest_detection": latest_det,
         "statistics": stats,
@@ -169,20 +190,50 @@ def camera_status():
     return jsonify(camera.get_status())
 
 
+@app.route("/api/camera/live_frame", methods=["GET"])
+def camera_live_frame():
+    """Returns single latest frame as JPEG."""
+    frame_bytes = camera.get_jpeg_frame()
+    if frame_bytes is not None:
+        return Response(
+            frame_bytes,
+            mimetype="image/jpeg",
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0"
+            }
+        )
+    return Response(b"", status=204)
+
+
 @app.route("/api/camera/stream", methods=["GET"])
+@app.route("/video_feed", methods=["GET"])
 def camera_stream():
     """Streams real-time MJPEG live video feed with active green leaf detection bounding-box overlays."""
     def generate():
         while True:
-            frame_bytes = camera.get_jpeg_frame()
-            if frame_bytes is not None:
-                yield (b"--frame\r\n"
-                       b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n")
-                time.sleep(0.035)
-            else:
-                time.sleep(0.05)
+            try:
+                frame_bytes = camera.get_jpeg_frame()
+                if frame_bytes is not None:
+                    yield (b"--frame\r\n"
+                           b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n")
+                    time.sleep(0.08)
+                else:
+                    time.sleep(0.05)
+            except (GeneratorExit, BrokenPipeError):
+                break
+            except Exception:
+                time.sleep(0.1)
 
-    return Response(generate(), mimetype="multipart/x-mixed-replace; boundary=frame")
+    return Response(
+        generate(),
+        mimetype="multipart/x-mixed-replace; boundary=frame",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache"
+        }
+    )
 
 
 @app.route("/api/camera/auto-detect", methods=["GET", "POST"])

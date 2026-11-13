@@ -1,38 +1,91 @@
-/* Global Modern Styles - AgriRover UI */
+/* ==========================================================================
+   AGRIROVER AI — GLOBAL DESIGN SYSTEM & AGRICULTURAL TECHNOLOGY THEME
+   Palette: Dark Forest Green, Deep Emerald, Sage Mint, Radiant Lime Accents
+   Typography: Clean, Modern, Professional Sans-Serif
+   ========================================================================== */
+
 :root {
-  --bg-primary: #090d16;
-  --bg-secondary: #0f172a;
-  --card-bg: #131d33;
-  --card-border: #1e293b;
-  --text-primary: #f8fafc;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
-  --accent-green: #10b981;
-  --accent-green-hover: #059669;
-  --accent-danger: #ef4444;
+  /* Deep Forest Green Background Tiers */
+  --bg-primary: #04120a;          /* Deepest Forest Night */
+  --bg-secondary: #081d12;        /* Pine Canopy Dark */
+  --bg-tertiary: #0c2719;         /* Dark Emerald Surface */
+  --bg-glass: rgba(8, 29, 18, 0.85);
+
+  /* Card Surfaces & Borders */
+  --card-bg: #0d281a;             /* Elevated Forest Card */
+  --card-bg-elevated: #113322;    /* Higher Elevation Surface */
+  --card-border: #18422d;         /* Subtle Evergreen Border */
+  --card-border-hover: #22c55e;   /* Active Emerald Glow */
+  --card-border-subtle: rgba(34, 197, 94, 0.15);
+
+  /* Fresh Agricultural Accents */
+  --accent-green: #10b981;        /* Crisp Emerald */
+  --accent-green-hover: #059669;  /* Deep Leaf Green */
+  --accent-lime: #22c55e;         /* Vibrant Sprout Lime */
+  --accent-emerald: #10b981;
+  --accent-sage: #34d399;         /* Soft Foliage Sage */
+  --accent-mint: #6ee7b7;         /* Bright Mint */
+
+  /* Semantic Diagnostic Accents */
+  --accent-danger: #ef4444;       /* Alert / Severe Infection / E-STOP */
   --accent-danger-hover: #dc2626;
-  --accent-warning: #f59e0b;
-  --accent-info: #3b82f6;
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 16px;
-  --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  --transition: all 0.25s ease-in-out;
+  --accent-danger-bg: rgba(239, 68, 68, 0.12);
+  --accent-warning: #f59e0b;      /* Warning / Cercospora / Chlorosis */
+  --accent-warning-hover: #d97706;
+  --accent-warning-bg: rgba(245, 158, 11, 0.12);
+  --accent-info: #06b6d4;         /* Ultrasonic Telemetry / Cyan */
+  --accent-info-hover: #0891b2;
+  --accent-info-bg: rgba(6, 182, 212, 0.12);
+
+  /* Professional Typography Colors */
+  --text-primary: #f0fdf4;        /* Clean Soft White / Mint Tint */
+  --text-secondary: #a7f3d0;      /* Pale Botanical Sage */
+  --text-muted: #6ee7b7;          /* Soft Foliage Accent */
+  --text-dim: #4ade80;            /* Muted Green */
+  --text-light-muted: #94a3b8;    /* Neutral Slate for IDs/Dates */
+
+  /* UI Geometry & Shadows */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
+  --radius-pill: 9999px;
+
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.55);
+  --shadow-glow: 0 0 20px rgba(16, 185, 129, 0.25);
+  --shadow-estop: 0 0 25px rgba(239, 68, 68, 0.45);
+
+  --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+  --transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-* {
+/* Base Reset & Smooth Rendering */
+*, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
 }
 
+html {
+  font-size: 15px;
+  background-color: var(--bg-primary);
+  color-scheme: dark;
+}
+
 body {
   font-family: var(--font-family);
-  background-color: var(--bg-primary);
+  background: radial-gradient(circle at 15% 15%, #082215 0%, #04120a 55%, #020905 100%);
+  background-attachment: fixed;
   color: var(--text-primary);
-  line-height: 1.5;
+  line-height: 1.55;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   min-height: 100vh;
+  overflow-x: hidden;
 }
 
 a {
@@ -40,6 +93,26 @@ a {
   text-decoration: none;
 }
 
-button, input, select {
+button, input, select, textarea {
   font-family: inherit;
+  font-size: inherit;
+}
+
+/* Custom Forest Scrollbars */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: #06180e;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #18422d;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-green);
 }

@@ -1,0 +1,26 @@
+{
+  "name": "AgriRover AI - Precision Agriculture Smart Rover",
+  "short_name": "AgriRover AI",
+  "description": "Smart agricultural rover with real-time AI leaf disease classification, live camera monitoring, obstacle navigation, and precision sprayer.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#05130b",
+  "theme_color": "#092316",
+  "icons": [
+    {
+      "src": "/icons/icon-96.png",
+      "sizes": "96x96",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

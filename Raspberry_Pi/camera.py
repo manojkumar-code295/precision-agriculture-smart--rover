@@ -330,7 +330,21 @@ class RoverCamera:
         filename = f"auto_leaf_{timestamp_str}.jpg"
         save_path = self.captures_dir / filename
         try:
-            cv2.imwrite(str(save_path), frame)
+            # Crop candidate leaf with 10% safety margin to remove background noise
+            x, y, bw, bh = leaf.box
+            h, w = frame.shape[:2]
+            if bw > 24 and bh > 24 and (bw < int(w * 0.92)) and (bh < int(h * 0.92)):
+                pad_x = int(bw * 0.10)
+                pad_y = int(bh * 0.10)
+                x1 = max(0, x - pad_x)
+                y1 = max(0, y - pad_y)
+                x2 = min(w, x + bw + pad_x)
+                y2 = min(h, y + bh + pad_y)
+                save_img = frame[y1:y2, x1:x2]
+            else:
+                save_img = frame
+
+            cv2.imwrite(str(save_path), save_img)
             self.last_capture_path = save_path
             if self.on_auto_capture:
                 threading.Thread(target=self.on_auto_capture, args=(save_path,), daemon=True).start()
@@ -386,8 +400,10 @@ class RoverCamera:
 
     def get_status(self) -> Dict[str, Any]:
         """Returns structured camera diagnostic status."""
+        is_streaming_live = bool(self.is_connected and (self.live_fps > 0.0 or self.raw_capture_fps > 0.0) and self.latest_jpeg is not None)
         return {
             "camera_connected": self.is_connected,
+            "status": "STREAMING" if is_streaming_live else "INTERRUPTED",
             "camera_type": self.camera_type,
             "resolution": "640x480",
             "target_fps": "8-10 FPS",
@@ -397,6 +413,7 @@ class RoverCamera:
             "auto_interval_sec": self.auto_interval_sec,
             "detected_leaves_count": len(self.latest_detected_leaves),
             "last_capture": str(self.last_capture_path) if self.last_capture_path else None,
+            "last_frame_timestamp": datetime.now().isoformat() if self.latest_jpeg is not None else None,
             "error_message": self.error_message,
             "status_timestamp": datetime.now().isoformat()
         }

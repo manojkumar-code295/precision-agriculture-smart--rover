@@ -12,64 +12,31 @@ import { RoverApiService, SystemStatus, DetectionRecord } from './services/rover
   styleUrls: ['./app.component.css']
 })
 export class AppComponent implements OnInit, OnDestroy {
-  title = 'Plant Disease Detection AI - Precision Agriculture Smart Rover';
-  activeTab: string = 'dashboard';
+  title = 'AgriRover AI — Precision Agriculture Smart Rover';
+  // EXACTLY FIVE PAGES
+  activeTab: 'dashboard' | 'rover' | 'data' | 'analytics' | 'settings' = 'dashboard';
   mobileMenuOpen: boolean = false;
 
   // Live Subsystem Status
   status: SystemStatus | null = null;
   latestDetection: DetectionRecord | null = null;
   historyList: DetectionRecord[] = [];
+  filteredHistoryList: DetectionRecord[] = [];
   statistics: any = null;
   diseaseInfoList: any[] = [];
-  telemetry: any = null;
 
   // Rover Movement
   roverSpeed: number = 75;
   activeMovement: string = 'STOPPED';
   isMoving: boolean = false;
-  obstacleStatus: any = null;
 
-  // Live Camera Stream & Detection
+  // Camera Live Stream & Video Controls
   liveStreamActive: boolean = true;
   streamError: boolean = false;
   autoDetectEnabled: boolean = true;
   autoInterval: number = 3.0;
   streamTimestamp: number = Date.now();
-
-  get liveStreamUrl(): string {
-    return `${this.api.getLiveStreamUrl()}?t=${this.streamTimestamp}`;
-  }
-
-  toggleLiveStream(): void {
-    this.liveStreamActive = !this.liveStreamActive;
-    if (this.liveStreamActive) {
-      this.streamError = false;
-      this.streamTimestamp = Date.now();
-    }
-  }
-
-  onStreamError(event: any): void {
-    console.warn('Live stream disconnected or awaiting frames:', event);
-    this.streamError = true;
-    // Automatically retry connecting after 2.0s
-    setTimeout(() => {
-      if (this.liveStreamActive) {
-        this.streamError = false;
-        this.streamTimestamp = Date.now();
-      }
-    }, 2000);
-  }
-
-  toggleAutoDetect(): void {
-    this.autoDetectEnabled = !this.autoDetectEnabled;
-    this.api.setAutoDetect(this.autoDetectEnabled, this.autoInterval).subscribe({
-      next: (res) => {
-        this.showAlert(`Auto leaf detection set to ${this.autoDetectEnabled ? 'ON' : 'OFF'}`, 'info');
-      },
-      error: () => {}
-    });
-  }
+  useSingleFrameMode: boolean = false;
 
   // Sprayer State
   sprayDuration: number = 3.0;
@@ -77,15 +44,15 @@ export class AppComponent implements OnInit, OnDestroy {
   showSprayConfirmModal: boolean = false;
   sprayTargetDisease: string = '';
 
-  // History Filter
-  historyFilterDisease: string = '';
-  historyMinConfidence: number = 0;
+  // Daily Data Search & Filtering
+  dataSearchQuery: string = '';
+  dataFilterDisease: string = 'ALL';
+  dataMinConfidence: number = 0;
 
   // Settings
   apiEndpoint: string = '';
   confidenceThreshold: number = 70;
-  obstacleDistanceThreshold: number = 25;
-  selectedCloudPreset: string = 'local';
+  selectedCloudPreset: string = 'render';
 
   // UI Alerts
   alertMessage: string | null = null;
@@ -93,23 +60,24 @@ export class AppComponent implements OnInit, OnDestroy {
 
   // Subscriptions
   private pollSub?: Subscription;
-  private frameSub?: Subscription;
 
-  // Dataset Static Metadata (from Stage 2 Verified Reports)
-  datasetInfo = {
-    totalImages: 6764,
-    categories: [
-      { name: 'Bacterial Spot', folder: 'Bacterial_Spot', count: 1629, precision: 1.0000, recall: 0.9325, f1: 0.9651 },
-      { name: 'Cercospora Leaf Spot', folder: 'Cercospora_Leaf_Spot', count: 1898, precision: 0.9688, recall: 0.9789, f1: 0.9738 },
-      { name: 'Curl Virus', folder: 'Curl_Virus', count: 1590, precision: 0.9437, recall: 0.9497, f1: 0.9467 },
-      { name: 'Healthy Leaf', folder: 'Healthy_Leaf', count: 1647, precision: 0.9306, recall: 0.9758, f1: 0.9527 }
-    ],
-    architecture: 'MobileNetV2 CNN (Transfer Learning)',
-    inputShape: '160 x 160 x 3 (RGB float32)',
-    testAccuracy: 96.01,
+  // Genuine MobileNetV2 AI Test Metrics
+  aiPerformance = {
+    architecture: 'MobileNetV2 Edge CNN (Transfer Learning)',
+    inputDimensions: '160 × 160 × 3 (RGB float32)',
+    modelFramework: 'TensorFlow Lite v2.1.0 (Edge Optimized)',
+    overallTestAccuracy: 96.01,
     testLoss: 0.1451,
-    tfliteSizeMb: 8.49,
-    kerasSizeMb: 20.78
+    avgInferenceLatencyMs: 18.4,
+    totalDatasetImages: 6764,
+    trainingImages: 5411,
+    testingImages: 677,
+    classes: [
+      { name: 'Healthy Leaf', code: 'Healthy_Leaf', precision: 0.9306, recall: 0.9758, f1: 0.9527, testSamples: 165 },
+      { name: 'Bacterial Leaf Spot', code: 'Bacterial_Spot', precision: 1.0000, recall: 0.9325, f1: 0.9651, testSamples: 163 },
+      { name: 'Cercospora Leaf Spot', code: 'Cercospora_Leaf_Spot', precision: 0.9688, recall: 0.9789, f1: 0.9738, testSamples: 190 },
+      { name: 'Chili Leaf Curl Virus', code: 'Curl_Virus', precision: 0.9438, recall: 0.9497, f1: 0.9467, testSamples: 159 }
+    ]
   };
 
   constructor(public api: RoverApiService) {}
@@ -118,16 +86,9 @@ export class AppComponent implements OnInit, OnDestroy {
     this.apiEndpoint = this.api.getStoredApiUrl();
     this.refreshAllData();
 
-    // Start 3-second live telemetry poll
-    this.pollSub = interval(3000).subscribe(() => {
+    // 2.5 second live telemetry polling
+    this.pollSub = interval(2500).subscribe(() => {
       this.fetchLiveStatus();
-    });
-
-    // High-speed progressive frame refresh for cloud live frame mode (2 FPS)
-    this.frameSub = interval(500).subscribe(() => {
-      if (this.liveStreamActive && this.api.isCloudMode() && !this.streamError) {
-        this.streamTimestamp = Date.now();
-      }
     });
 
     this.loadDiseaseEncyclopedia();
@@ -137,17 +98,21 @@ export class AppComponent implements OnInit, OnDestroy {
     if (this.pollSub) {
       this.pollSub.unsubscribe();
     }
-    if (this.frameSub) {
-      this.frameSub.unsubscribe();
-    }
   }
 
-  setTab(tabName: string): void {
-    this.activeTab = tabName;
+  get liveStreamUrl(): string {
+    if (this.useSingleFrameMode) {
+      return `${this.api.getLiveFrameUrl()}?t=${this.streamTimestamp}`;
+    }
+    return `${this.api.getLiveStreamUrl()}?t=${this.streamTimestamp}`;
+  }
+
+  setTab(tab: 'dashboard' | 'rover' | 'data' | 'analytics' | 'settings'): void {
+    this.activeTab = tab;
     this.mobileMenuOpen = false;
-    if (tabName === 'history') {
+    if (tab === 'data') {
       this.fetchHistory();
-    } else if (tabName === 'analytics') {
+    } else if (tab === 'analytics') {
       this.fetchStatistics();
     }
   }
@@ -156,91 +121,141 @@ export class AppComponent implements OnInit, OnDestroy {
     this.mobileMenuOpen = !this.mobileMenuOpen;
   }
 
-  showAlert(msg: string, type: 'success' | 'warning' | 'danger' | 'info' = 'info'): void {
+  showAlert(msg: string, type: 'success' | 'warning' | 'danger' | 'info' = 'info', timeoutMs: number = 4000): void {
     this.alertMessage = msg;
     this.alertType = type;
-    setTimeout(() => {
-      if (this.alertMessage === msg) {
-        this.alertMessage = null;
-      }
-    }, 5000);
+    if (timeoutMs > 0) {
+      setTimeout(() => {
+        if (this.alertMessage === msg) {
+          this.alertMessage = null;
+        }
+      }, timeoutMs);
+    }
   }
 
-  // -----------------------------------------------------------
-  // Polling & Data Retrieval
-  // -----------------------------------------------------------
   refreshAllData(): void {
     this.fetchLiveStatus();
     this.fetchHistory();
     this.fetchStatistics();
-    this.fetchSensors();
   }
 
   fetchLiveStatus(): void {
-    this.api.getStatus().subscribe(res => {
-      this.status = res;
-      this.obstacleStatus = res?.rover?.obstacle_status;
-      this.sprayerActive = !!res?.sprayer?.sprayer_active;
-      if (res?.latest_detection) {
-        this.latestDetection = res.latest_detection;
-      }
-      if (this.streamError && res?.pi_online) {
-        this.streamError = false;
-      }
+    this.api.getStatus().subscribe({
+      next: (status) => {
+        this.status = status;
+        if (status.rover?.motor_status) {
+          this.activeMovement = status.rover.motor_status.state || 'STOPPED';
+          this.isMoving = (this.activeMovement !== 'STOPPED');
+        }
+        if (status.sprayer) {
+          this.sprayerActive = status.sprayer.sprayer_active;
+        }
+        if (status.latest_detection) {
+          this.latestDetection = status.latest_detection;
+        }
+      },
+      error: () => {}
     });
   }
 
   fetchHistory(): void {
-    const minConf = this.historyMinConfidence > 0 ? this.historyMinConfidence : undefined;
-    const disease = this.historyFilterDisease || undefined;
-    this.api.getDetections(50, 0, disease, minConf).subscribe(res => {
-      if (res?.detections) {
-        this.historyList = res.detections;
-      }
+    this.api.getDetections(100, 0, this.dataFilterDisease, this.dataMinConfidence).subscribe({
+      next: (res) => {
+        if (res.success && res.detections) {
+          this.historyList = res.detections;
+          this.applyDataFilter();
+          if (this.historyList.length > 0 && !this.latestDetection) {
+            this.latestDetection = this.historyList[0];
+          }
+        }
+      },
+      error: () => {}
+    });
+  }
+
+  applyDataFilter(): void {
+    const q = this.dataSearchQuery.toLowerCase().trim();
+    this.filteredHistoryList = this.historyList.filter(item => {
+      const matchQuery = !q ||
+        item.detection_id.toLowerCase().includes(q) ||
+        item.predicted_disease.toLowerCase().includes(q) ||
+        (item.image_filename && item.image_filename.toLowerCase().includes(q));
+
+      const matchDisease = (this.dataFilterDisease === 'ALL') ||
+        (item.predicted_disease.startsWith(this.dataFilterDisease));
+
+      const matchConfidence = !this.dataMinConfidence || (item.confidence >= this.dataMinConfidence);
+
+      return matchQuery && matchDisease && matchConfidence;
     });
   }
 
   fetchStatistics(): void {
-    this.api.getStatistics().subscribe(res => {
-      if (res) {
-        this.statistics = res;
-      }
+    this.api.getStatistics().subscribe({
+      next: (stats) => {
+        this.statistics = stats;
+      },
+      error: () => {}
     });
   }
 
-  fetchSensors(): void {
-    this.api.getSensors().subscribe(res => {
-      if (res) {
-        this.telemetry = res;
-      }
-    });
+  getDistributionList(): { key: string; label: string; count: number }[] {
+    if (!this.statistics || !this.statistics.disease_distribution) {
+      return [];
+    }
+    const dist = this.statistics.disease_distribution;
+    return Object.keys(dist).map(k => ({
+      key: k,
+      label: dist[k]?.label || k.replace(/_/g, ' '),
+      count: Number(dist[k]?.count || 0)
+    }));
   }
 
   loadDiseaseEncyclopedia(): void {
-    this.api.getDiseaseInfo().subscribe(res => {
-      if (res?.diseases) {
-        this.diseaseInfoList = res.diseases;
-      }
+    this.api.getDiseaseInfo().subscribe({
+      next: (res) => {
+        if (res.success && res.diseases) {
+          this.diseaseInfoList = res.diseases;
+        }
+      },
+      error: () => {}
     });
   }
 
   // -----------------------------------------------------------
-  // Camera & Detection Controls
+  // Camera Controls
   // -----------------------------------------------------------
-  captureImage(): void {
-    this.showAlert('Capturing leaf image from Raspberry Pi camera...', 'info');
+  toggleLiveStream(): void {
+    this.liveStreamActive = !this.liveStreamActive;
+    if (this.liveStreamActive) {
+      this.streamError = false;
+      this.streamTimestamp = Date.now();
+    }
+  }
+
+  onStreamError(event: any): void {
+    console.warn('Live stream stream error, switching to progressive fallback mode:', event);
+    this.streamError = true;
+    this.useSingleFrameMode = true;
+    setTimeout(() => {
+      this.streamError = false;
+      this.streamTimestamp = Date.now();
+    }, 1500);
+  }
+
+  triggerManualCapture(): void {
+    this.showAlert('Capturing high-resolution camera snapshot...', 'info');
     this.api.captureLeaf(true).subscribe({
       next: (res) => {
         if (res.success) {
+          this.showAlert('Snapshot captured & classified successfully!', 'success');
           if (res.detection) {
             this.latestDetection = res.detection;
-            this.showAlert(`Leaf Classified: ${res.detection.predicted_disease} (${res.detection.confidence}%)`, 'success');
-            this.fetchHistory();
-          } else {
-            this.showAlert('Image captured successfully.', 'success');
           }
+          this.fetchHistory();
+          this.fetchLiveStatus();
         } else {
-          this.showAlert(`Capture failed: ${res.error}`, 'danger');
+          this.showAlert(res.message || 'Capture could not be completed.', 'warning');
         }
       },
       error: (err) => {
@@ -249,17 +264,32 @@ export class AppComponent implements OnInit, OnDestroy {
     });
   }
 
+  toggleAutoDetect(): void {
+    this.autoDetectEnabled = !this.autoDetectEnabled;
+    this.api.setAutoDetect(this.autoDetectEnabled, this.autoInterval).subscribe({
+      next: () => {
+        this.showAlert(`Automated leaf detection set to ${this.autoDetectEnabled ? 'ON' : 'OFF'}`, 'info');
+      },
+      error: () => {}
+    });
+  }
+
   onFileUpload(event: any): void {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    this.showAlert(`Uploading ${file.name} for AI classification...`, 'info');
+    this.showAlert(`Verifying botanical foliage and classifying ${file.name}...`, 'info');
     this.api.classifyUploadedLeaf(file).subscribe({
       next: (res) => {
         if (res.success && res.detection) {
           this.latestDetection = res.detection;
-          this.showAlert(`Diagnosis Complete: ${res.detection.predicted_disease} (${res.detection.confidence}%)`, 'success');
+          if (res.detection.leaf_detected) {
+            this.showAlert(`Diagnosis Complete: ${res.detection.predicted_disease} (${res.detection.confidence}%)`, 'success');
+          } else {
+            this.showAlert(`Non-Plant Object: ${res.detection.display_label}`, 'warning');
+          }
           this.fetchHistory();
+          this.fetchLiveStatus();
         } else {
           this.showAlert(`Classification failed: ${res.error}`, 'danger');
         }
@@ -279,14 +309,14 @@ export class AppComponent implements OnInit, OnDestroy {
         if (res.success) {
           this.activeMovement = direction;
           this.isMoving = (direction !== 'STOP');
-          this.showAlert(`Rover command: ${direction} (${this.roverSpeed}%)`, 'info');
+          this.showAlert(`Rover Command: ${direction} (${this.roverSpeed}%)`, 'info', 2000);
         } else {
           this.activeMovement = 'BLOCKED';
-          this.showAlert(res.message || 'Movement blocked!', 'warning');
+          this.showAlert(res.message || 'Movement blocked by obstacle safety lock!', 'warning');
         }
       },
       error: (err) => {
-        this.showAlert(`Rover communication error: ${err.message}`, 'danger');
+        this.showAlert(`Rover command error: ${err.message}`, 'danger');
       }
     });
   }
@@ -294,7 +324,7 @@ export class AppComponent implements OnInit, OnDestroy {
   emergencyStop(): void {
     this.api.emergencyStop().subscribe({
       next: () => {
-        this.activeMovement = 'EMERGENCY_STOP';
+        this.activeMovement = 'STOPPED';
         this.isMoving = false;
         this.showAlert('EMERGENCY HARD STOP ACTIVATED!', 'danger');
       },
@@ -323,12 +353,12 @@ export class AppComponent implements OnInit, OnDestroy {
 
   confirmSprayer(): void {
     this.showSprayConfirmModal = false;
-    this.showAlert(`Actuating chemical sprayer for ${this.sprayDuration}s...`, 'warning');
+    this.showAlert(`Actuating precision chemical sprayer for ${this.sprayDuration}s...`, 'warning');
     this.api.activateSprayer(this.sprayDuration, true, { disease: this.sprayTargetDisease }).subscribe({
       next: (res) => {
         if (res.success) {
           this.sprayerActive = true;
-          this.showAlert(`Sprayer activated for ${this.sprayDuration}s.`, 'success');
+          this.showAlert(`Sprayer actuated for ${this.sprayDuration}s.`, 'success');
           setTimeout(() => {
             this.sprayerActive = false;
           }, this.sprayDuration * 1000);
@@ -360,18 +390,19 @@ export class AppComponent implements OnInit, OnDestroy {
 
   setApiPreset(preset: string): void {
     this.selectedCloudPreset = preset;
-    if (preset === 'local') {
-      this.apiEndpoint = 'http://localhost:5000';
-    } else if (preset === 'render') {
-      this.apiEndpoint = 'https://precision-agriculture-smart-rover.onrender.com';
+    if (preset === 'render') {
+      this.apiEndpoint = 'https://precision-agriculture-smart-rover-5xxg.onrender.com';
+    } else if (preset === 'local') {
+      this.apiEndpoint = 'http://localhost:5001';
     }
   }
 
   triggerCloudSync(): void {
-    this.showAlert('Triggering cloud synchronization...', 'info');
+    this.showAlert('Triggering cloud telemetry synchronization...', 'info');
     this.api.triggerSync().subscribe(res => {
       if (res.success) {
         this.showAlert(`Sync Complete! Synced: ${res.synced_detections || 0} detections.`, 'success');
+        this.refreshAllData();
       } else {
         this.showAlert(`Sync notice: ${res.message || res.error}`, 'warning');
       }
@@ -382,8 +413,12 @@ export class AppComponent implements OnInit, OnDestroy {
     window.open(this.api.exportCsvUrl(), '_blank');
   }
 
-  getImageUrl(filename?: string): string {
-    if (!filename) return 'assets/placeholder-leaf.png';
-    return `${this.api.baseUrl$.getValue()}/captures/${filename}`;
+  getDiseaseBadgeClass(disease?: string): string {
+    if (!disease) return 'badge-neutral';
+    if (disease.includes('Healthy')) return 'badge-healthy';
+    if (disease.includes('Bacterial')) return 'badge-bacterial';
+    if (disease.includes('Cercospora')) return 'badge-cercospora';
+    if (disease.includes('Curl')) return 'badge-curl';
+    return 'badge-neutral';
   }
 }

@@ -14,7 +14,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from leaf_detector import comprehensive_leaf_verifier
+from leaf_detector import comprehensive_leaf_verifier, ChiliLeafDetector
 
 try:
     from ai_edge_litert.interpreter import Interpreter
@@ -87,6 +87,7 @@ class LeafDiseaseClassifier:
         self.input_details = None
         self.output_details = None
         self.class_names = config.CLASS_NAMES
+        self.detector = ChiliLeafDetector()
         self.load_model()
         self._initialized = True
 
@@ -123,19 +124,48 @@ class LeafDiseaseClassifier:
         except Exception as e:
             return False, f"Corrupted or invalid image: {str(e)}"
 
-    def preprocess_image(self, image_path: Path) -> np.ndarray:
-        """Preprocesses image to (1, 160, 160, 3) float32 RGB array."""
-        with Image.open(image_path) as img:
-            rgb_img = img.convert("RGB")
-            resized_img = rgb_img.resize(config.IMAGE_SIZE)
-            img_array = np.asarray(resized_img, dtype=np.float32)
-            img_array = np.expand_dims(img_array, axis=0)
-            return img_array
+    def extract_leaf_roi(self, img_bgr: np.ndarray) -> np.ndarray:
+        """
+        Extracts tightly bounded leaf ROI candidate or returns full image
+        if already tightly cropped, preventing background noise from distorting CNN.
+        """
+        h, w = img_bgr.shape[:2]
+        if w <= 320 and h <= 320:
+            return img_bgr
+
+        candidates, _ = self.detector.detect_leaf_candidates(img_bgr)
+        if candidates:
+            # Pick largest verified leaf candidate
+            best_cand = candidates[0]
+            x, y, bw, bh = best_cand["box"]
+            cand_area = float(bw * bh)
+            frame_area = float(w * h)
+            if (cand_area / frame_area) > 0.55:
+                return img_bgr
+
+            pad_x = int(bw * 0.15)
+            pad_y = int(bh * 0.15)
+            x1 = max(0, x - pad_x)
+            y1 = max(0, y - pad_y)
+            x2 = min(w, x + bw + pad_x)
+            y2 = min(h, y + bh + pad_y)
+            roi = img_bgr[y1:y2, x1:x2]
+            if roi.shape[0] > 40 and roi.shape[1] > 40:
+                return roi
+        return img_bgr
+
+    def preprocess_image_array(self, img_bgr: np.ndarray) -> np.ndarray:
+        """Preprocesses BGR image array to (1, 160, 160, 3) float32 RGB array."""
+        rgb_img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+        resized_img = cv2.resize(rgb_img, (160, 160))
+        img_array = np.asarray(resized_img, dtype=np.float32)
+        img_array = np.expand_dims(img_array, axis=0)
+        return img_array
 
     def predict(self, image_path: Path, confidence_threshold: Optional[float] = None) -> Dict[str, Any]:
         """
-        Two-stage AI diagnosis pipeline:
-        Stage 1: Real Botanical Leaf Verification
+        Robust Two-Stage AI Diagnosis Engine:
+        Stage 1: Multi-Feature Botanical Leaf Verification
                  Rejects non-plant objects (human hands/skin, walls, curtains, tables, clothes).
         Stage 2: Edge TFLite Disease Classification
                  Only executed if Stage 1 confirms a genuine plant leaf.
@@ -146,12 +176,15 @@ class LeafDiseaseClassifier:
         if not valid:
             raise ValueError(f"Image validation failed: {err_msg}")
 
-        # Stage 1: Real Botanical Leaf Verification
         img_bgr = cv2.imread(str(image_path))
+        if img_bgr is None:
+            raise ValueError(f"Could not decode image at {image_path}")
+
+        # Stage 1: Real Botanical Leaf Verification
         is_leaf, leaf_status, leaf_conf, leaf_details = comprehensive_leaf_verifier(img_bgr)
 
         if not is_leaf:
-            logger.info(f"Leaf verification rejected image {image_path.name}: {leaf_status} ({leaf_details.get('reason')})")
+            logger.info(f"Leaf verification rejected {image_path.name}: {leaf_status} ({leaf_details.get('reason')})")
             return {
                 "detection_id": f"DET-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}",
                 "timestamp": datetime.now().isoformat(),
@@ -160,28 +193,29 @@ class LeafDiseaseClassifier:
                 "leaf_detected": False,
                 "status": "NO_LEAF_DETECTED",
                 "display_label": leaf_status,
-                "predicted_disease": leaf_status,
+                "predicted_disease": "No Leaf Detected",
                 "disease_code": "NO_LEAF",
                 "confidence": 0.0,
                 "confidence_threshold": threshold,
                 "is_low_confidence": True,
                 "all_class_probabilities": {name: 0.0 for name in self.class_names},
                 "disease_details": {
-                    "disease_name": leaf_status,
+                    "disease_name": "No Leaf Detected",
                     "symptoms": leaf_details.get("reason", "Non-plant object detected in camera view."),
                     "treatment_type": "No Chemical Treatment",
                     "recommended_chemicals": "None",
-                    "management_guidance": "No leaf result. Please place a real chili plant leaf in front of the camera.",
-                    "safety_warning": "No action needed."
+                    "management_guidance": f"{leaf_status}. Please position a real chili plant leaf in front of the camera.",
+                    "safety_warning": "No action needed. Do not apply chemicals."
                 },
-                "recommendation": f"{leaf_status}. Please place a real chili plant leaf in front of the camera under clear lighting.",
+                "recommendation": f"{leaf_status}. Please position a real chili plant leaf in front of the camera under clear lighting.",
                 "sprayer_recommended": False,
                 "requires_user_confirmation": False,
                 "verification_details": leaf_details
             }
 
-        # Stage 2: TFLite Disease Classification on Confirmed Leaf
-        input_data = self.preprocess_image(image_path)
+        # Stage 2: TFLite Disease Classification on Confirmed Leaf ROI
+        leaf_roi = self.extract_leaf_roi(img_bgr)
+        input_data = self.preprocess_image_array(leaf_roi)
 
         # Set input tensor and invoke interpreter
         self.interpreter.set_tensor(self.input_details[0]["index"], input_data)
@@ -199,7 +233,7 @@ class LeafDiseaseClassifier:
         disease_info = DISEASE_KNOWLEDGE_BASE.get(predicted_class, {})
         recommendation_text = disease_info.get("management_guidance", "Regular monitoring recommended.")
         if is_low_confidence:
-            recommendation_text = f"Low confidence ({raw_confidence:.1f}% < {threshold}%). Re-position camera and re-capture under clearer lighting before taking treatment action."
+            recommendation_text = f"Low confidence diagnosis ({raw_confidence:.1f}% < {threshold}%). Please capture another image with better leaf focus and lighting before taking treatment action."
 
         detection_record = {
             "detection_id": f"DET-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}",
@@ -207,10 +241,10 @@ class LeafDiseaseClassifier:
             "image_filename": image_path.name,
             "image_path": str(image_path.resolve()),
             "leaf_detected": True,
-            "status": "PLANT_LEAF_DETECTED",
-            "display_label": "Plant / Leaf Detected",
+            "status": "CONFIRMED" if not is_low_confidence else "CONFIRMED_LOW_CONFIDENCE",
+            "display_label": "Plant / Leaf Detected" if not is_low_confidence else "Plant / Leaf Detected (Low Confidence)",
             "leaf_confidence": leaf_conf,
-            "predicted_disease": predicted_class if not is_low_confidence else f"{predicted_class} (Low Confidence)",
+            "predicted_disease": predicted_class,
             "disease_code": predicted_class,
             "confidence": round(raw_confidence, 2),
             "confidence_threshold": threshold,

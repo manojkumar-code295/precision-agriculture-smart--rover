@@ -67,7 +67,7 @@ class CloudSyncService:
                 time.sleep(self.heartbeat_interval)
 
         def camera_stream_worker():
-            """Continuously transmits live annotated camera frames to Render Cloud API."""
+            """Continuously transmits live annotated camera frames to Render Cloud API with adaptive pacing."""
             logger.info(f"Cloud camera live streaming worker active -> {self.cloud_url}/api/camera/stream_frame")
             while self.running:
                 try:
@@ -84,15 +84,15 @@ class CloudSyncService:
                                     f"{self.cloud_url}/api/camera/stream_frame",
                                     data=jpeg_bytes,
                                     headers=headers,
-                                    timeout=2.0
+                                    timeout=1.2
                                 )
                                 if resp.status_code in (200, 204):
                                     self.is_online = True
                             except requests.RequestException:
-                                time.sleep(0.5)
+                                time.sleep(0.3)
                 except Exception as e:
                     logger.debug(f"Frame transmission loop error: {e}")
-                time.sleep(0.18)  # ~5.5 FPS continuous cloud stream
+                time.sleep(0.20)  # Paced at ~5 FPS cloud transmission
 
         self.sync_thread = threading.Thread(target=sync_worker, daemon=True)
         self.sync_thread.start()
@@ -119,16 +119,34 @@ class CloudSyncService:
         return False
 
     def send_heartbeat(self):
-        """Sends live status to cloud API and executes any queued remote commands."""
+        """Sends comprehensive live status to cloud API and executes any queued remote commands."""
         headers = {
             "Content-Type": "application/json",
             "X-Device-ID": config.DEVICE_ID,
             "X-API-Key": self.api_key
         }
 
+        cam_status = self.camera.get_status() if self.camera else {
+            "camera_connected": False,
+            "status": "INTERRUPTED",
+            "camera_type": "Offline",
+            "live_fps": 0.0
+        }
+
         payload = {
             "device_id": config.DEVICE_ID,
-            "camera": self.camera.get_status() if self.camera else {"camera_connected": False},
+            "device_name": config.DEVICE_NAME,
+            "pi_online": True,
+            "timestamp": datetime.now().isoformat(),
+            "camera": cam_status,
+            "ai": {
+                "status": "RUNNING",
+                "model_version": "2.1.0-Edge",
+                "architecture": "MobileNetV2 CNN",
+                "input_shape": "160x160x3",
+                "classes": config.CLASS_NAMES
+            },
+            "fps": cam_status.get("live_fps", 0.0),
             "rover": self.rover.get_status() if self.rover else {"mode": "MANUAL", "is_moving": False},
             "sensors": self.sensor_manager.get_all_sensors() if self.sensor_manager else {},
             "sprayer": self.sprayer.get_status() if self.sprayer else {"sprayer_active": False}
