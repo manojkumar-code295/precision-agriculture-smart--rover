@@ -45,6 +45,18 @@
         <span class="pill-val">{{ status?.battery?.percentage || 94 }}%</span>
       </div>
 
+      <!-- Phone Control Connect Button -->
+      <button class="btn btn-phone-nav" (click)="openPhoneModal()" title="Connect Smartphone to Rover">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+        <span>📱 Phone</span>
+      </button>
+
+      <!-- Header Sprayer Quick Toggle Button -->
+      <button class="btn-spray-header" [class.spray-active]="sprayerActive" (click)="toggleManualSprayer()" title="Toggle Chemical Sprayer ON/OFF">
+        <span class="sprayer-dot" [class.pulsing]="sprayerActive"></span>
+        <span>{{ sprayerActive ? 'SPRAY ON' : 'SPRAY OFF' }}</span>
+      </button>
+
       <!-- Prominent Emergency Hard Stop Button -->
       <button class="btn btn-estop-nav" (click)="emergencyStop()" title="Emergency Hard Stop Rover & Sprayer">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2"/></svg>
@@ -127,6 +139,9 @@
         </div>
       </div>
     </aside>
+
+    <!-- Mobile Sidebar Backdrop Overlay -->
+    <div *ngIf="mobileMenuOpen" class="mobile-sidebar-backdrop" (click)="mobileMenuOpen = false"></div>
 
     <!-- Main Content Area -->
     <main class="content-viewport">
@@ -277,6 +292,91 @@
                 <button class="btn btn-sm btn-primary" (click)="triggerManualCapture()">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>
                   <span>Snapshot</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- ============================================== -->
+            <!-- DEDICATED MANUAL SPRAYER BAR ON DASHBOARD       -->
+            <!-- (ALWAYS VISIBLE - NEVER HIDDEN BY DETECTION)    -->
+            <!-- ============================================== -->
+            <div class="manual-sprayer-pod dashboard-sprayer-pod">
+              <div class="sprayer-pod-header">
+                <div class="sprayer-pod-title">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.2"><path d="M12 2v6"/><path d="M12 18v4"/><path d="M4.93 4.93l4.24 4.24"/><path d="M14.83 14.83l4.24 4.24"/><path d="M2 12h6"/><path d="M18 12h4"/></svg>
+                  <div>
+                    <h4 class="sprayer-heading">Manual Chemical Sprayer</h4>
+                    <span class="sprayer-subtext">Direct Hardware Relay Actuation • GPIO 26</span>
+                  </div>
+                </div>
+                <span class="sprayer-live-pill" [class.active]="sprayerActive">
+                  <span class="sprayer-dot" [class.pulsing]="sprayerActive"></span>
+                  {{ sprayerActive ? 'PUMP ACTIVE (SPRAYING)' : 'PUMP OFF (STANDBY)' }}
+                </span>
+              </div>
+
+              <!-- High-Visibility Dual ON / OFF Buttons -->
+              <div class="sprayer-dual-btn-row">
+                <button
+                  class="btn btn-spray-on"
+                  [class.active-glow]="sprayerActive"
+                  (click)="turnSprayerOn()"
+                  title="Turn chemical spray pump ON">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                  <span>SPRAYER ON</span>
+                </button>
+
+                <button
+                  class="btn btn-spray-off"
+                  [class.active-glow]="!sprayerActive"
+                  (click)="turnSprayerOff()"
+                  title="Turn chemical spray pump OFF">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  <span>SPRAYER OFF</span>
+                </button>
+              </div>
+
+              <div class="sprayer-options-row">
+                <div class="duration-mini-wrap">
+                  <span class="opt-label">Pulse Duration:</span>
+                  <select [(ngModel)]="sprayDuration" class="form-select form-select-sm">
+                    <option [ngValue]="1.0">1.0s Quick Pulse</option>
+                    <option [ngValue]="2.0">2.0s Pulse</option>
+                    <option [ngValue]="3.0">3.0s Standard Pulse</option>
+                    <option [ngValue]="5.0">5.0s Intensive Pulse</option>
+                    <option [ngValue]="0">Continuous Manual</option>
+                  </select>
+                </div>
+                <span class="manual-mode-tag">🔒 100% Manual Operator Control</span>
+              </div>
+            </div>
+
+            <!-- Quick Mobile Rover Steering Bar on Dashboard -->
+            <div class="dashboard-quick-drive">
+              <div class="quick-drive-header">
+                <div class="quick-drive-title">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="12 8 8 12 12 16 16 12 12 8"/></svg>
+                  <span>Quick Rover Steering</span>
+                </div>
+                <span class="badge" [ngClass]="isMoving ? 'badge-success' : 'badge-neutral'">{{ activeMovement }}</span>
+              </div>
+              <div class="quick-drive-buttons">
+                <button class="btn btn-drive-fwd" (click)="sendRoverMove('FORWARD')" title="Drive Forward">
+                  ▲ FWD
+                </button>
+                <div class="quick-drive-mid">
+                  <button class="btn btn-drive-left" (click)="sendRoverMove('LEFT')" title="Turn Left">
+                    ◀ LEFT
+                  </button>
+                  <button class="btn btn-drive-stop" (click)="sendRoverMove('STOP')" title="STOP ROVER">
+                    🛑 STOP
+                  </button>
+                  <button class="btn btn-drive-right" (click)="sendRoverMove('RIGHT')" title="Turn Right">
+                    RIGHT ▶
+                  </button>
+                </div>
+                <button class="btn btn-drive-rev" (click)="sendRoverMove('BACKWARD')" title="Drive Backward">
+                  ▼ REV
                 </button>
               </div>
             </div>
@@ -933,6 +1033,88 @@
       <div class="modal-actions">
         <button class="btn btn-secondary" (click)="showSprayConfirmModal = false">Cancel</button>
         <button class="btn btn-warning" (click)="confirmSprayer()">Confirm & Actuate Sprayer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mobile Sticky Bottom Navigation & Fast Control Bar -->
+  <nav class="mobile-bottom-nav">
+    <button class="mobile-nav-btn" [class.active]="activeTab === 'dashboard'" (click)="setTab('dashboard')">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
+      <span>Dashboard</span>
+    </button>
+    <button class="mobile-nav-btn" [class.active]="activeTab === 'rover'" (click)="setTab('rover')">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="12 8 8 12 12 16 16 12 12 8"/></svg>
+      <span>Drive</span>
+    </button>
+    <button class="mobile-nav-btn btn-mobile-spray-on" [class.active]="sprayerActive" (click)="turnSprayerOn()">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+      <span>Spray ON</span>
+    </button>
+    <button class="mobile-nav-btn btn-mobile-spray-off" [class.active]="!sprayerActive" (click)="turnSprayerOff()">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      <span>Spray OFF</span>
+    </button>
+    <button class="mobile-nav-btn btn-mobile-estop" (click)="emergencyStop()">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2"/></svg>
+      <span>E-STOP</span>
+    </button>
+  </nav>
+
+  <!-- Smartphone Connection & Remote Control Modal -->
+  <div *ngIf="showPhoneModal" class="modal-backdrop" (click)="closePhoneModal()">
+    <div class="modal-card phone-connect-card" (click)="$event.stopPropagation()">
+      <div class="modal-header">
+        <div class="modal-title-with-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.2"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+          <h3>Connect Your Smartphone to AgriRover</h3>
+        </div>
+        <button class="modal-close-btn" (click)="closePhoneModal()" aria-label="Close modal">✕</button>
+      </div>
+
+      <div class="modal-body text-center">
+        <p class="phone-intro-text">
+          Scan this QR code with your phone camera to control the rover and sprayer directly from your smartphone:
+        </p>
+
+        <!-- Static High-Contrast QR Code -->
+        <div class="qr-preview-container">
+          <img src="render_qr.png" alt="Scan QR code with phone" class="phone-qr-img" />
+          <span class="qr-scan-hint">Point phone camera here to connect</span>
+        </div>
+
+        <!-- Render Direct URL with One-Click Copy -->
+        <div class="phone-url-display">
+          <span class="phone-url-string">{{ renderUrl }}</span>
+          <button class="btn btn-sm btn-primary" (click)="copyRenderUrl()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            <span>Copy Link</span>
+          </button>
+        </div>
+
+        <!-- Easy Step-by-Step Instructions -->
+        <div class="phone-instructions-grid">
+          <div class="phone-step-card">
+            <span class="step-badge">1</span>
+            <h4>Scan or Open Link</h4>
+            <p>Scan the QR code with your phone camera or open Chrome/Safari and visit the URL.</p>
+          </div>
+          <div class="phone-step-card">
+            <span class="step-badge">2</span>
+            <h4>Drive Rover</h4>
+            <p>Use the touch D-Pad (FWD, LEFT, STOP, RIGHT, REV) to steer the rover with low latency.</p>
+          </div>
+          <div class="phone-step-card">
+            <span class="step-badge">3</span>
+            <h4>Control Sprayer</h4>
+            <p>Tap <strong>SPRAYER ON</strong> to spray pesticide, and <strong>SPRAYER OFF</strong> to stop.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn btn-secondary" (click)="closePhoneModal()">Done</button>
+        <button class="btn btn-primary" (click)="copyRenderUrl()">Copy URL to Share</button>
       </div>
     </div>
   </div>

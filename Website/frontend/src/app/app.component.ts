@@ -63,6 +63,10 @@ export class AppComponent implements OnInit, OnDestroy {
   alertMessage: string | null = null;
   alertType: 'success' | 'warning' | 'danger' | 'info' = 'info';
 
+  // Smartphone Connection Modal
+  showPhoneModal: boolean = false;
+  renderUrl: string = 'https://precision-agriculture-smart-rover-5xxg.onrender.com';
+
   // Subscriptions
   private pollSub?: Subscription;
 
@@ -423,6 +427,40 @@ export class AppComponent implements OnInit, OnDestroy {
         this.showAlert(`Emergency stop error: ${err.message}`, 'danger');
       }
     });
+  }
+
+  onDrivePress(direction: string, event?: Event): void {
+    if (event) {
+      event.preventDefault();
+    }
+    this.sendRoverMove(direction);
+  }
+
+  onDriveRelease(event?: Event): void {
+    if (event) {
+      event.preventDefault();
+    }
+    this.sendRoverMove('STOP');
+  }
+
+  openPhoneModal(): void {
+    this.showPhoneModal = true;
+  }
+
+  closePhoneModal(): void {
+    this.showPhoneModal = false;
+  }
+
+  copyRenderUrl(): void {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(this.renderUrl).then(() => {
+        this.showAlert('Render URL copied to clipboard! Paste it into your phone browser.', 'success', 3000);
+      }).catch(() => {
+        this.showAlert(`Open on phone: ${this.renderUrl}`, 'info', 5000);
+      });
+    } else {
+      this.showAlert(`Open on phone: ${this.renderUrl}`, 'info', 5000);
+    }
   }
 
   setRoverMode(mode: string): void {
