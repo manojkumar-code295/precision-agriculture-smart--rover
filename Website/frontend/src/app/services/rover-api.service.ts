@@ -126,16 +126,18 @@ export class RoverApiService {
           return window.location.origin;
         }
 
-        // If accessing local Pi or desktop
-        if (host === 'localhost' || host === '127.0.0.1') {
-          if (port === '5001' || port === '5000') {
-            return window.location.origin;
-          }
-          return 'http://localhost:5001';
+        // If port is specified (e.g. 5000, 5001) or accessed via direct IP/hotspot
+        if (port === '5000' || port === '5001') {
+          return window.location.origin;
         }
 
-        // LAN access (e.g. agrirover.local or 192.168.x.x)
-        return `http://${host}:5001`;
+        // If accessing local Pi or desktop
+        if (host === 'localhost' || host === '127.0.0.1') {
+          return 'http://localhost:5000';
+        }
+
+        // LAN or Hotspot access (e.g. 10.42.0.1 or 192.168.x.x)
+        return window.location.origin;
       }
     }
     return this.defaultCloudUrl;

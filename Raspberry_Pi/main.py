@@ -123,10 +123,21 @@ def serve_capture(filename):
 
 
 # -------------------------------------------------------------
-# System & Status Endpoints
+# Frontend Static Asset Path & Single-Page Application Routes
 # -------------------------------------------------------------
+FRONTEND_DIST = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "Website", "backend", "dist_client"))
+
+
 @app.route("/", methods=["GET"])
-def index():
+@app.route("/<path:path>", methods=["GET"])
+def index(path=""):
+    if path.startswith("api/") or path.startswith("captures/") or path in ("video_feed", "camera", "live"):
+        return jsonify({"error": "Endpoint not found"}), 404
+    if FRONTEND_DIST and os.path.exists(FRONTEND_DIST):
+        target_file = os.path.join(FRONTEND_DIST, path)
+        if path and os.path.isfile(target_file):
+            return send_from_directory(FRONTEND_DIST, path)
+        return send_from_directory(FRONTEND_DIST, "index.html")
     return jsonify({
         "service": "Plant Disease Detection AI - Smart Rover Core",
         "device_id": config.DEVICE_ID,
