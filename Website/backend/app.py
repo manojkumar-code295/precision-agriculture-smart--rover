@@ -251,7 +251,10 @@ DISEASE_ENCYCLOPEDIA = [
 # -------------------------------------------------------------
 # Endpoints
 # -------------------------------------------------------------
-FRONTEND_DIST = os.path.abspath(os.path.join(os.path.dirname(__file__), "../frontend/dist/frontend/browser"))
+# Frontend Static Asset Paths
+FRONTEND_DIST_LOCAL = os.path.abspath(os.path.join(os.path.dirname(__file__), "dist_client"))
+FRONTEND_DIST_DEV = os.path.abspath(os.path.join(os.path.dirname(__file__), "../frontend/dist/frontend/browser"))
+FRONTEND_DIST = FRONTEND_DIST_LOCAL if os.path.exists(FRONTEND_DIST_LOCAL) else FRONTEND_DIST_DEV
 
 # Live In-Memory Camera Frame Buffer
 LATEST_LIVE_FRAME = {
