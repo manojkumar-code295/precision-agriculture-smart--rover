@@ -157,14 +157,14 @@ class ChiliLeafDetector:
 
     def __init__(
         self,
-        min_area_ratio: float = 0.03,    # Minimum 3% of frame area
-        max_area_ratio: float = 0.72,    # Maximum 72% of frame area (prevents full-frame lock)
-        min_solidity: float = 0.42,      # Leaf blade contour compactness
-        min_aspect: float = 0.28,        # Width to height lower bound
-        max_aspect: float = 3.40,        # Width to height upper bound
+        min_area_ratio: float = 0.02,    # Minimum 2% of frame area
+        max_area_ratio: float = 0.94,    # Support close-up leaves up to 94% of frame area
+        min_solidity: float = 0.38,      # Leaf blade contour compactness
+        min_aspect: float = 0.22,        # Width to height lower bound
+        max_aspect: float = 4.20,        # Width to height upper bound
         blur_threshold: float = 35.0,    # Laplacian variance cutoff
-        min_brightness: float = 18.0,    # Minimum mean gray level
-        max_brightness: float = 250.0    # Maximum mean gray level
+        min_brightness: float = 16.0,    # Minimum mean gray level
+        max_brightness: float = 252.0    # Maximum mean gray level
     ):
         self.min_area_ratio = min_area_ratio
         self.max_area_ratio = max_area_ratio
@@ -198,7 +198,7 @@ class ChiliLeafDetector:
 
         # 1. Excess Green Index
         exg = (2.0 * g) - r - b
-        chlorophyll_mask = (exg > 4.0) & (g > 32.0)
+        chlorophyll_mask = (exg > 4.0) & (g > 30.0)
 
         # 2. HSV Green & Yellow Bands
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
@@ -206,8 +206,8 @@ class ChiliLeafDetector:
         s = hsv[:, :, 1]
         v = hsv[:, :, 2]
 
-        green_band = (h >= 20) & (h <= 98) & (s >= 20) & (v >= 30)
-        yellow_band = (h >= 12) & (h <= 45) & (s >= 25) & (v >= 40) & (r > 50.0) & (g > 45.0)
+        green_band = (h >= 18) & (h <= 98) & (s >= 20) & (v >= 25)
+        yellow_band = (h >= 12) & (h <= 45) & (s >= 25) & (v >= 35) & (r > 45.0) & (g > 40.0)
 
         # 3. Suppress Skin and Hands
         ycrcb = cv2.cvtColor(frame, cv2.COLOR_BGR2YCrCb)
@@ -241,7 +241,7 @@ class ChiliLeafDetector:
         candidates = []
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            # Area bounds: must be between 3% and 72% of total frame area
+            # Area bounds: must be between min_area_ratio and max_area_ratio
             if area < (frame_area * self.min_area_ratio) or area > (frame_area * self.max_area_ratio):
                 continue
 
@@ -249,10 +249,8 @@ class ChiliLeafDetector:
             if bw == 0 or bh == 0:
                 continue
 
-            # Strict guard against full-frame or border-filling false detections
-            if x <= 2 and y <= 2 and bw >= (w - 4) and bh >= (h - 4):
-                continue
-            if bw >= int(w * 0.94) or bh >= int(h * 0.94):
+            # Strict guard against full-frame border filling only if both width and height touch borders
+            if bw >= int(w * 0.99) and bh >= int(h * 0.99):
                 continue
 
             hull = cv2.convexHull(cnt)
@@ -281,6 +279,28 @@ class ChiliLeafDetector:
                         "confidence": leaf_conf,
                         "contour": cnt
                     })
+
+        # Fallback check: if no individual contour candidate was accepted,
+        # verify if the center or full frame is a genuine close-up leaf view
+        if not candidates:
+            is_full_leaf, full_label, full_conf, full_meta = comprehensive_leaf_verifier(frame)
+            if is_full_leaf:
+                pad_x = int(w * 0.05)
+                pad_y = int(h * 0.05)
+                bw = w - 2 * pad_x
+                bh = h - 2 * pad_y
+                candidates.append({
+                    "box": (pad_x, pad_y, bw, bh),
+                    "centroid": (w // 2, h // 2),
+                    "area": float(bw * bh),
+                    "solidity": 0.85,
+                    "aspect_ratio": float(bw) / float(bh),
+                    "confidence": full_conf,
+                    "contour": None
+                })
+                return candidates, "OK"
+            else:
+                return [], full_label
 
         # Sort candidates by area descending (largest leaf first)
         candidates.sort(key=lambda c: c["area"], reverse=True)
@@ -418,16 +438,30 @@ def annotate_frame(
     for leaf in leaves:
         x, y, bw, bh = leaf.box
 
-        if leaf.status == "CONFIRMED_STABLE":
-            box_color = (0, 230, 0)     # Neon Green
-            label_text = f"PLANT / LEAF DETECTED ({leaf.confidence:.1f}%)"
-            if leaf.disease:
-                label_text += f" | {leaf.disease}"
+        # Distinct disease colors for visual clarity
+        disease_name = leaf.disease or ""
+        if "Healthy" in disease_name:
+            box_color = (0, 230, 0)      # Bright Green
+        elif "Bacterial" in disease_name:
+            box_color = (0, 140, 255)    # Orange
+        elif "Cercospora" in disease_name:
+            box_color = (180, 50, 180)   # Purple
+        elif "Curl" in disease_name:
+            box_color = (30, 30, 225)    # Crimson Red
+        elif leaf.status == "CONFIRMED_STABLE":
+            box_color = (0, 230, 0)      # Neon Green
         elif leaf.status == "SETTLING":
-            box_color = (0, 215, 255)   # Amber Yellow
+            box_color = (0, 215, 255)    # Amber Yellow
+        else:
+            box_color = (0, 0, 230)      # Red Alert
+
+        if leaf.disease:
+            label_text = f"LEAF: {leaf.disease}"
+        elif leaf.status == "CONFIRMED_STABLE":
+            label_text = f"CONFIRMED LEAF ({leaf.confidence:.1f}%)"
+        elif leaf.status == "SETTLING":
             label_text = f"VERIFYING LEAF... ({leaf.tracking_frames}/3)"
         else:
-            box_color = (0, 0, 230)     # Red Alert
             label_text = leaf.label
 
         # Draw main rectangle
@@ -471,8 +505,29 @@ def annotate_frame(
     cv2.rectangle(canvas, (0, 0), (w, hud_bg_height), (10, 25, 18), -1)
 
     has_confirmed_leaf = any(l.status == "CONFIRMED_STABLE" for l in leaves)
-    status_str = "PLANT / LEAF DETECTED" if has_confirmed_leaf else ("VERIFYING..." if leaves else "NO LEAF IN VIEW")
-    status_color = (0, 230, 0) if has_confirmed_leaf else ((0, 215, 255) if leaves else (160, 175, 165))
+    first_disease = next((l.disease for l in leaves if l.disease), None)
+
+    if first_disease:
+        status_str = f"LEAF: {first_disease}"
+        status_color = (0, 230, 0) if "Healthy" in first_disease else (0, 165, 255)
+    elif has_confirmed_leaf:
+        status_str = "PLANT / LEAF DETECTED"
+        status_color = (0, 230, 0)
+    elif leaves:
+        status_str = "VERIFYING LEAF..."
+        status_color = (0, 215, 255)
+    elif "Hand" in quality_status:
+        status_str = "NO LEAF (HAND SUPPRESSED)"
+        status_color = (50, 50, 240)
+    elif "Wall" in quality_status:
+        status_str = "NO LEAF (WALL SUPPRESSED)"
+        status_color = (150, 150, 200)
+    elif "Curtain" in quality_status or "Clothes" in quality_status or "Not a Plant" in quality_status:
+        status_str = "NO LEAF (NON-PLANT SUPPRESSED)"
+        status_color = (150, 150, 200)
+    else:
+        status_str = "NO LEAF IN VIEW"
+        status_color = (160, 175, 165)
 
     hud_text = f"AGRIROVER AI | FPS: {fps:.1f} | 640x480 | Auto: {'ON' if auto_active else 'OFF'}"
     cv2.putText(canvas, hud_text, (10, 21), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (52, 211, 153), 1, cv2.LINE_AA)

@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Component, OnInit, OnDestroy, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Subscription, interval } from 'rxjs';
@@ -33,10 +33,15 @@ export class AppComponent implements OnInit, OnDestroy {
   // Camera Live Stream & Video Controls
   liveStreamActive: boolean = true;
   streamError: boolean = false;
+  streamLoaded: boolean = false;
   autoDetectEnabled: boolean = true;
   autoInterval: number = 3.0;
   streamTimestamp: number = Date.now();
   useSingleFrameMode: boolean = false;
+  frameTimer: any = null;
+  liveFpsDisplay: number = 0;
+  frameCount: number = 0;
+  lastFpsCalcTime: number = Date.now();
 
   // Sprayer State
   sprayDuration: number = 3.0;
@@ -92,16 +97,26 @@ export class AppComponent implements OnInit, OnDestroy {
     });
 
     this.loadDiseaseEncyclopedia();
+
+    // If accessing through cloud (Render), activate high-performance progressive frame streaming
+    if (this.api.isCloudMode()) {
+      this.useSingleFrameMode = true;
+      this.streamTimestamp = Date.now();
+    }
   }
 
   ngOnDestroy(): void {
     if (this.pollSub) {
       this.pollSub.unsubscribe();
     }
+    if (this.frameTimer) {
+      clearTimeout(this.frameTimer);
+      this.frameTimer = null;
+    }
   }
 
   get liveStreamUrl(): string {
-    if (this.useSingleFrameMode) {
+    if (this.useSingleFrameMode || this.api.isCloudMode()) {
       return `${this.api.getLiveFrameUrl()}?t=${this.streamTimestamp}`;
     }
     return `${this.api.getLiveStreamUrl()}?t=${this.streamTimestamp}`;
@@ -223,24 +238,100 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   // -----------------------------------------------------------
-  // Camera Controls
+  // Camera Controls & Live Progressive Streaming
   // -----------------------------------------------------------
+  onFrameLoaded(): void {
+    this.streamError = false;
+    this.streamLoaded = true;
+    this.frameCount++;
+    const now = Date.now();
+    if (now - this.lastFpsCalcTime >= 1000) {
+      this.liveFpsDisplay = Math.round((this.frameCount * 1000) / (now - this.lastFpsCalcTime));
+      this.frameCount = 0;
+      this.lastFpsCalcTime = now;
+    }
+
+    // Auto-advance next frame for cloud Render or progressive single frame fallback
+    if (this.liveStreamActive && (this.useSingleFrameMode || this.api.isCloudMode())) {
+      if (this.frameTimer) clearTimeout(this.frameTimer);
+      this.frameTimer = setTimeout(() => {
+        if (this.liveStreamActive) {
+          this.streamTimestamp = Date.now();
+        }
+      }, 100); // 100ms pacing -> ultra-smooth ~10 FPS live streaming over Render
+    }
+  }
+
   toggleLiveStream(): void {
     this.liveStreamActive = !this.liveStreamActive;
     if (this.liveStreamActive) {
       this.streamError = false;
       this.streamTimestamp = Date.now();
+      if (this.useSingleFrameMode || this.api.isCloudMode()) {
+        if (this.frameTimer) clearTimeout(this.frameTimer);
+        this.frameTimer = setTimeout(() => {
+          this.streamTimestamp = Date.now();
+        }, 100);
+      }
+    } else {
+      if (this.frameTimer) {
+        clearTimeout(this.frameTimer);
+        this.frameTimer = null;
+      }
     }
   }
 
   onStreamError(event: any): void {
-    console.warn('Live stream stream error, switching to progressive fallback mode:', event);
     this.streamError = true;
     this.useSingleFrameMode = true;
-    setTimeout(() => {
-      this.streamError = false;
-      this.streamTimestamp = Date.now();
-    }, 1500);
+    if (this.frameTimer) clearTimeout(this.frameTimer);
+    this.frameTimer = setTimeout(() => {
+      if (this.liveStreamActive) {
+        this.streamError = false;
+        this.streamTimestamp = Date.now();
+      }
+    }, 800);
+  }
+
+  @HostListener('window:keydown', ['$event'])
+  handleKeyboardEvent(event: KeyboardEvent): void {
+    if (this.activeTab !== 'rover') return;
+    const target = event.target as HTMLElement;
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) {
+      return;
+    }
+
+    const key = event.key.toUpperCase();
+    if (key === 'W' || key === 'ARROWUP') {
+      event.preventDefault();
+      if (this.activeMovement !== 'FORWARD') this.sendRoverMove('FORWARD');
+    } else if (key === 'S' || key === 'ARROWDOWN') {
+      event.preventDefault();
+      if (this.activeMovement !== 'BACKWARD') this.sendRoverMove('BACKWARD');
+    } else if (key === 'A' || key === 'ARROWLEFT') {
+      event.preventDefault();
+      if (this.activeMovement !== 'LEFT') this.sendRoverMove('LEFT');
+    } else if (key === 'D' || key === 'ARROWRIGHT') {
+      event.preventDefault();
+      if (this.activeMovement !== 'RIGHT') this.sendRoverMove('RIGHT');
+    } else if (key === ' ' || key === 'X' || key === 'ESCAPE') {
+      event.preventDefault();
+      this.sendRoverMove('STOP');
+    }
+  }
+
+  @HostListener('window:keyup', ['$event'])
+  handleKeyboardUpEvent(event: KeyboardEvent): void {
+    if (this.activeTab !== 'rover') return;
+    const target = event.target as HTMLElement;
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) {
+      return;
+    }
+    const key = event.key.toUpperCase();
+    if (['W', 'ARROWUP', 'S', 'ARROWDOWN', 'A', 'ARROWLEFT', 'D', 'ARROWRIGHT'].includes(key)) {
+      event.preventDefault();
+      this.sendRoverMove('STOP');
+    }
   }
 
   triggerManualCapture(): void {

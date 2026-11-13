@@ -222,7 +222,14 @@
                 [src]="liveStreamUrl"
                 class="camera-stream-feed"
                 alt="Live Camera Feed from AgriRover"
+                (load)="onFrameLoaded()"
                 (error)="onStreamError($event)" />
+
+              <!-- Live Stream Quality / FPS HUD Badge -->
+              <div class="video-hud-overlay" *ngIf="liveStreamActive && !streamError">
+                <span class="hud-live-indicator"><span class="hud-live-dot"></span>LIVE</span>
+                <span class="hud-fps-pill">{{ liveFpsDisplay > 0 ? liveFpsDisplay + ' FPS' : (api.isCloudMode() ? 'Render Stream' : 'MJPEG') }}</span>
+              </div>
 
               <!-- Standby Overlay -->
               <div *ngIf="!liveStreamActive || streamError" class="camera-standby-overlay">
@@ -417,6 +424,16 @@
                   <span>REV</span>
                 </button>
               </div>
+
+              <!-- Keyboard Hotkeys Info Banner -->
+              <div class="keyboard-controls-hint">
+                <span class="hint-label">⌨ Keyboard Drive:</span>
+                <span class="hint-key">W / ↑</span> Fwd
+                <span class="hint-key">A / ←</span> Left
+                <span class="hint-key">S / ↓</span> Rev
+                <span class="hint-key">D / →</span> Right
+                <span class="hint-key">Space</span> Stop
+              </div>
             </div>
 
             <!-- Throttle Speed Control Slider -->
@@ -460,7 +477,14 @@
                 [src]="liveStreamUrl"
                 class="cockpit-video-feed"
                 alt="Driving Camera View"
+                (load)="onFrameLoaded()"
                 (error)="onStreamError($event)" />
+
+              <!-- Live HUD Stream Indicator -->
+              <div class="video-hud-overlay" *ngIf="liveStreamActive && !streamError">
+                <span class="hud-live-indicator"><span class="hud-live-dot"></span>LIVE</span>
+                <span class="hud-fps-pill">{{ liveFpsDisplay > 0 ? liveFpsDisplay + ' FPS' : (api.isCloudMode() ? 'Render Stream' : 'MJPEG') }}</span>
+              </div>
 
               <!-- Obstacle Radar HUD Overlay -->
               <div class="radar-hud-tag" [ngClass]="(status?.rover?.obstacle_status?.distance_cm || 100) < 20 ? 'radar-hazard' : 'radar-clear'">

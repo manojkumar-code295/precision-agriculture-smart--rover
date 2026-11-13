@@ -39,6 +39,14 @@ logger = logging.getLogger("RoverMain")
 app = Flask(__name__)
 CORS(app)
 
+# Check Stop Flag before initializing hardware
+STOP_FLAG = config.PROJECT_ROOT / "SERVICE_STOPPED"
+if STOP_FLAG.exists():
+    logger.info("Service STOP flag detected (%s). Holding in dormant standby...", STOP_FLAG)
+    while STOP_FLAG.exists():
+        time.sleep(1.0)
+    logger.info("Service STOP flag removed. Proceeding with subsystem initialization...")
+
 # Initialize Subsystems
 logger.info("Initializing Smart Rover Subsystems...")
 db = RoverDatabase()
@@ -234,6 +242,150 @@ def camera_stream():
             "Pragma": "no-cache"
         }
     )
+
+
+@app.route("/camera", methods=["GET"])
+@app.route("/live", methods=["GET"])
+def live_camera_page():
+    """Serves high-reliability live camera monitor with auto-reconnection and diagnostics."""
+    html = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AgriRover AI - Live Camera & Keras Leaf Detection</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        body { background: #0f1715; color: #e2e8f0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+        header { background: #13221c; padding: 10px 18px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1f3d30; }
+        .title { font-size: 16px; font-weight: 700; color: #34d399; display: flex; align-items: center; gap: 8px; }
+        .badges { display: flex; gap: 8px; align-items: center; }
+        .badge { font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 9999px; }
+        .badge-live { background: #065f46; color: #a7f3d0; border: 1px solid #059669; }
+        .badge-model { background: #1e3a5f; color: #bfdbfe; border: 1px solid #3b82f6; }
+        .main-container { flex: 1; display: flex; justify-content: center; align-items: center; padding: 12px; position: relative; background: #09100e; }
+        .video-box { position: relative; width: 100%; max-width: 900px; max-height: 90vh; aspect-ratio: 4/3; background: #000; border-radius: 8px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.6); border: 2px solid #1f3d30; display: flex; justify-content: center; align-items: center; }
+        #stream-img { width: 100%; height: 100%; object-fit: contain; display: block; }
+        #placeholder { position: absolute; display: flex; flex-direction: column; align-items: center; gap: 12px; color: #94a3b8; }
+        .spinner { width: 44px; height: 44px; border: 4px solid #1e3a2e; border-top-color: #34d399; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        footer { background: #13221c; padding: 8px 18px; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #1f3d30; font-size: 12px; color: #94a3b8; }
+        .btn { background: #059669; color: white; border: none; padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; transition: 0.2s; }
+        .btn:hover { background: #10b981; }
+        .btn-reload { background: #334155; }
+        .btn-reload:hover { background: #475569; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="title">
+            <span>🌿</span> AgriRover AI – Real-Time Chili Leaf Detection
+        </div>
+        <div class="badges">
+            <span class="badge badge-model">Keras MobileNetV2</span>
+            <span class="badge badge-live" id="cam-status-badge">Connecting...</span>
+        </div>
+    </header>
+
+    <div class="main-container">
+        <div class="video-box">
+            <div id="placeholder">
+                <div class="spinner"></div>
+                <p id="placeholder-text">Connecting to Live Camera Stream...</p>
+            </div>
+            <img id="stream-img" src="" alt="Live Stream" style="display: none;">
+        </div>
+    </div>
+
+    <footer>
+        <div id="telemetry">Telemetry: Initializing sensor and AI monitor...</div>
+        <div style="display: flex; gap: 8px;">
+            <button class="btn btn-reload" onclick="forceReconnect()">↻ Reload Stream</button>
+            <button class="btn" onclick="captureManual()">📸 Capture Leaf</button>
+        </div>
+    </footer>
+
+    <script>
+        const img = document.getElementById("stream-img");
+        const placeholder = document.getElementById("placeholder");
+        const placeholderText = document.getElementById("placeholder-text");
+        const badge = document.getElementById("cam-status-badge");
+        const telemetry = document.getElementById("telemetry");
+
+        let reconnectTimer = null;
+        let isConnected = false;
+
+        function connectStream() {
+            img.src = "/api/camera/stream?t=" + Date.now();
+        }
+
+        img.onload = () => {
+            isConnected = true;
+            placeholder.style.display = "none";
+            img.style.display = "block";
+            badge.textContent = "ONLINE (STREAMING)";
+            badge.style.background = "#065f46";
+            badge.style.borderColor = "#059669";
+        };
+
+        img.onerror = () => {
+            isConnected = false;
+            placeholder.style.display = "flex";
+            img.style.display = "none";
+            placeholderText.textContent = "Camera Stream Interrupted. Reconnecting...";
+            badge.textContent = "RECONNECTING...";
+            badge.style.background = "#854d0e";
+            badge.style.borderColor = "#ca8a04";
+
+            clearTimeout(reconnectTimer);
+            reconnectTimer = setTimeout(connectStream, 1500);
+        };
+
+        function forceReconnect() {
+            placeholder.style.display = "flex";
+            placeholderText.textContent = "Refreshing Camera Stream...";
+            connectStream();
+        }
+
+        function captureManual() {
+            fetch("/api/camera/capture", { method: "POST" })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        alert("Snapshot captured: " + (data.detection?.predicted_disease || "Saved"));
+                    } else {
+                        alert("Capture error: " + (data.error || "Failed"));
+                    }
+                })
+                .catch(err => alert("Request error: " + err));
+        }
+
+        // Live Telemetry Poller
+        setInterval(() => {
+            fetch("/api/camera/status")
+                .then(r => r.json())
+                .then(data => {
+                    if (data.camera_connected && data.status === "STREAMING") {
+                        telemetry.textContent = `FPS: ${data.live_fps || 0.0} | Leaves in View: ${data.detected_leaves_count || 0} | Sensor: ${data.camera_type || 'RPi CSI'} | Leaf Guard: Active`;
+                        if (!isConnected && img.style.display === "none") {
+                            connectStream();
+                        }
+                    } else {
+                        telemetry.textContent = `Camera Status: ${data.status || 'Offline'} (${data.error_message || 'Waiting'})`;
+                    }
+                })
+                .catch(() => {
+                    telemetry.textContent = "Rover Service Offline. Waiting for service restart...";
+                });
+        }, 1500);
+
+        // Initial connection
+        connectStream();
+    </script>
+</body>
+</html>
+"""
+    return Response(html, mimetype="text/html")
 
 
 @app.route("/api/camera/auto-detect", methods=["GET", "POST"])

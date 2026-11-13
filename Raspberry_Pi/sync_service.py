@@ -36,7 +36,7 @@ class CloudSyncService:
         self.cloud_url = config.CLOUD_API_URL.rstrip("/")
         self.api_key = config.CLOUD_API_KEY
         self.sync_interval = config.SYNC_INTERVAL_SEC
-        self.heartbeat_interval = 3.0  # Frequent telemetry heartbeat for real-time remote commands
+        self.heartbeat_interval = 2.0  # Snappy telemetry heartbeat for real-time remote commands
         self.session = requests.Session()
 
         self.is_online = False
@@ -67,7 +67,7 @@ class CloudSyncService:
                 time.sleep(self.heartbeat_interval)
 
         def camera_stream_worker():
-            """Continuously transmits live annotated camera frames to Render Cloud API with adaptive pacing."""
+            """Continuously transmits live annotated camera frames to Render Cloud API with adaptive pacing & real-time command dispatch."""
             logger.info(f"Cloud camera live streaming worker active -> {self.cloud_url}/api/camera/stream_frame")
             while self.running:
                 try:
@@ -84,15 +84,22 @@ class CloudSyncService:
                                     f"{self.cloud_url}/api/camera/stream_frame",
                                     data=jpeg_bytes,
                                     headers=headers,
-                                    timeout=1.2
+                                    timeout=1.5
                                 )
                                 if resp.status_code in (200, 204):
                                     self.is_online = True
+                                    try:
+                                        res_data = resp.json() or {}
+                                        pending_cmds = res_data.get("pending_commands", [])
+                                        for cmd in pending_cmds:
+                                            self._execute_remote_command(cmd)
+                                    except Exception:
+                                        pass
                             except requests.RequestException:
                                 time.sleep(0.3)
                 except Exception as e:
                     logger.debug(f"Frame transmission loop error: {e}")
-                time.sleep(0.20)  # Paced at ~5 FPS cloud transmission
+                time.sleep(0.12)  # Paced at ~8 FPS for responsive video and ~120ms command roundtrip
 
         self.sync_thread = threading.Thread(target=sync_worker, daemon=True)
         self.sync_thread.start()
@@ -181,6 +188,25 @@ class CloudSyncService:
             res = self.rover.execute_command(command_str, speed=speed)
             logger.info(f"Executed rover move {command_str}: {res}")
 
+        elif cmd_type in ("ROVER_STOP", "STOP", "EMERGENCY_STOP") and self.rover:
+            self.rover.emergency_stop()
+            logger.info("Executed rover STOP/EMERGENCY_STOP command.")
+
+        elif cmd_type == "ROVER_MODE" and self.rover:
+            mode = cmd.get("mode", "MANUAL")
+            res = self.rover.set_mode(mode)
+            logger.info(f"Executed rover mode switch: {res}")
+
+        elif cmd_type == "AUTO_DETECT_CONFIG" and self.camera:
+            enabled = bool(cmd.get("enabled", True))
+            interval = float(cmd.get("interval", 3.0))
+            self.camera.set_auto_detect(enabled, interval)
+            logger.info(f"Updated auto-detect config: enabled={enabled}, interval={interval}s")
+
+        elif cmd_type == "CAPTURE_LEAF" and self.camera:
+            succ, path, qual = self.camera.capture_image()
+            logger.info(f"Triggered remote leaf capture: success={succ}, path={path}, quality={qual}")
+
         elif cmd_type == "SPRAYER_ACTUATE" and self.sprayer:
             action = cmd.get("action", "OFF")
             duration = float(cmd.get("duration", 3.0))
@@ -189,9 +215,6 @@ class CloudSyncService:
                 self.sprayer.activate_spray(duration_sec=duration, user_confirmed=confirmed)
             else:
                 self.sprayer.stop_spray()
-
-        elif cmd_type in ("ROVER_STOP", "EMERGENCY_STOP") and self.rover:
-            self.rover.emergency_stop()
 
     def perform_sync(self) -> Dict[str, Any]:
         """Uploads pending batches of detections and sensor logs."""

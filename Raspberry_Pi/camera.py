@@ -21,6 +21,7 @@ import numpy as np
 
 import config
 from leaf_detector import ChiliLeafDetector, LeafTracker, annotate_frame, DetectedLeaf
+from inference import LeafDiseaseClassifier
 
 logger = logging.getLogger("RoverCamera")
 
@@ -51,6 +52,7 @@ class RoverCamera:
             # Detection & Streaming Subsystems
             self.detector = ChiliLeafDetector()
             self.tracker = LeafTracker(stability_frames=3, max_displacement_px=30.0, cooldown_sec=5.0)
+            self.classifier = LeafDiseaseClassifier()
             self.on_auto_capture = on_auto_capture
 
             self.auto_detect_enabled = True
@@ -233,6 +235,26 @@ class RoverCamera:
                 try:
                     candidates, qual_msg = self.detector.detect_leaf_candidates(frame_to_process)
                     detected = self.tracker.update(candidates)
+
+                    # Execute real-time Keras model prediction on verified leaf candidates
+                    h_f, w_f = frame_to_process.shape[:2]
+                    for leaf in detected:
+                        x, y, bw, bh = leaf.box
+                        pad_x = int(bw * 0.08)
+                        pad_y = int(bh * 0.08)
+                        x1 = max(0, x - pad_x)
+                        y1 = max(0, y - pad_y)
+                        x2 = min(w_f, x + bw + pad_x)
+                        y2 = min(h_f, y + bh + pad_y)
+                        roi = frame_to_process[y1:y2, x1:x2]
+
+                        if roi.size > 0 and roi.shape[0] >= 24 and roi.shape[1] >= 24:
+                            try:
+                                pred_class, conf, lat, scores = self.classifier.predict_keras_array(roi)
+                                leaf.disease = pred_class
+                                leaf.confidence = conf
+                            except Exception as infer_err:
+                                logger.debug(f"ROI Keras inference error: {infer_err}")
 
                     self.latest_detected_leaves = detected
                     self.latest_qual_msg = qual_msg

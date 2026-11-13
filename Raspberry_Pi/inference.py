@@ -4,6 +4,7 @@ Executes local edge inference using TensorFlow Lite on Raspberry Pi 4B.
 Identifies: Bacterial Spot, Cercospora Leaf Spot, Curl Virus, and Healthy Leaf.
 """
 
+import time
 import json
 import logging
 import uuid
@@ -24,6 +25,17 @@ except ImportError:
     except ImportError:
         import tensorflow as tf
         Interpreter = tf.lite.Interpreter
+
+try:
+    import keras
+    KERAS_LIB_AVAILABLE = True
+except ImportError:
+    try:
+        import tensorflow.keras as keras
+        KERAS_LIB_AVAILABLE = True
+    except ImportError:
+        keras = None
+        KERAS_LIB_AVAILABLE = False
 
 import config
 
@@ -78,38 +90,53 @@ class LeafDiseaseClassifier:
             cls._instance = super(LeafDiseaseClassifier, cls).__new__(cls)
         return cls._instance
 
-    def __init__(self, model_path: Path = config.TFLITE_MODEL_PATH):
+    def __init__(self, model_path: Path = config.TFLITE_MODEL_PATH, keras_model_path: Path = config.KERAS_MODEL_PATH):
         if hasattr(self, "_initialized") and self._initialized:
             return
 
         self.model_path = model_path
+        self.keras_model_path = keras_model_path
         self.interpreter = None
         self.input_details = None
         self.output_details = None
+        self.keras_model = None
         self.class_names = config.CLASS_NAMES
         self.detector = ChiliLeafDetector()
         self.load_model()
         self._initialized = True
 
     def load_model(self):
-        """Loads and allocates tensors for the optimized TFLite model."""
-        if not self.model_path.exists():
-            logger.error(f"TFLite model file not found at {self.model_path}")
-            raise FileNotFoundError(f"Model file missing: {self.model_path}")
-
-        logger.info(f"Loading TFLite model from {self.model_path}...")
-        self.interpreter = Interpreter(model_path=str(self.model_path))
-        self.interpreter.allocate_tensors()
-
-        self.input_details = self.interpreter.get_input_details()
-        self.output_details = self.interpreter.get_output_details()
-
-        # Load class names from json if available
+        """Loads both Keras (.keras) and LiteRT/TFLite models for live detection and comparison."""
+        # 1. Load class names from json if available
         if config.CLASS_NAMES_PATH.exists():
-            with open(config.CLASS_NAMES_PATH, "r") as f:
-                self.class_names = json.load(f)
+            try:
+                with open(config.CLASS_NAMES_PATH, "r") as f:
+                    self.class_names = json.load(f)
+            except Exception as e:
+                logger.warning(f"Could not load class names from {config.CLASS_NAMES_PATH}: {e}")
 
-        logger.info(f"Model loaded successfully. Input shape: {self.input_details[0]['shape']}, Classes: {self.class_names}")
+        # 2. Load TFLite model
+        if self.model_path.exists():
+            try:
+                logger.info(f"Loading TFLite model from {self.model_path}...")
+                self.interpreter = Interpreter(model_path=str(self.model_path))
+                self.interpreter.allocate_tensors()
+                self.input_details = self.interpreter.get_input_details()
+                self.output_details = self.interpreter.get_output_details()
+                logger.info(f"TFLite model loaded successfully.")
+            except Exception as e:
+                logger.warning(f"Failed to load TFLite model: {e}")
+
+        # 3. Load user's Keras model (best_chili_leaf_model.keras)
+        if KERAS_LIB_AVAILABLE and self.keras_model_path.exists():
+            try:
+                logger.info(f"Loading Keras CNN model from {self.keras_model_path}...")
+                self.keras_model = keras.models.load_model(str(self.keras_model_path))
+                logger.info(f"User Keras model loaded successfully ({self.keras_model_path.name}).")
+            except Exception as e:
+                logger.warning(f"Failed to load Keras model from {self.keras_model_path}: {e}")
+
+        logger.info(f"AI Classifier initialized. Classes: {self.class_names} | Keras loaded: {self.keras_model is not None} | TFLite loaded: {self.interpreter is not None}")
 
     def validate_image(self, image_path: Path) -> Tuple[bool, str]:
         """Validates that the file exists, is non-empty, and is a readable image."""
@@ -162,13 +189,54 @@ class LeafDiseaseClassifier:
         img_array = np.expand_dims(img_array, axis=0)
         return img_array
 
+    def predict_keras_array(self, img_bgr: np.ndarray) -> Tuple[str, float, float, Dict[str, float]]:
+        """
+        Executes real-time inference using the user's trained Keras CNN model (best_chili_leaf_model.keras).
+        Returns: (predicted_class, confidence_pct, latency_ms, all_class_probabilities)
+        """
+        if self.keras_model is None:
+            # Fallback to TFLite if Keras not directly loaded
+            return self.predict_tflite_array(img_bgr)
+
+        t0 = time.time()
+        input_data = self.preprocess_image_array(img_bgr)
+        preds = self.keras_model(input_data, training=False).numpy()[0]
+        latency_ms = (time.time() - t0) * 1000.0
+
+        best_idx = int(np.argmax(preds))
+        conf = float(preds[best_idx]) * 100.0
+        label = self.class_names[best_idx]
+        scores = {name: round(float(preds[i]) * 100.0, 2) for i, name in enumerate(self.class_names)}
+        return label, round(conf, 2), round(latency_ms, 1), scores
+
+    def predict_tflite_array(self, img_bgr: np.ndarray) -> Tuple[str, float, float, Dict[str, float]]:
+        """
+        Executes edge inference using LiteRT / TFLite runtime.
+        Returns: (predicted_class, confidence_pct, latency_ms, all_class_probabilities)
+        """
+        if self.interpreter is None:
+            return "Model Not Loaded", 0.0, 0.0, {n: 0.0 for n in self.class_names}
+
+        t0 = time.time()
+        input_data = self.preprocess_image_array(img_bgr)
+        self.interpreter.set_tensor(self.input_details[0]["index"], input_data)
+        self.interpreter.invoke()
+        output_data = self.interpreter.get_tensor(self.output_details[0]["index"])[0]
+        latency_ms = (time.time() - t0) * 1000.0
+
+        best_idx = int(np.argmax(output_data))
+        conf = float(output_data[best_idx]) * 100.0
+        label = self.class_names[best_idx]
+        scores = {name: round(float(output_data[i]) * 100.0, 2) for i, name in enumerate(self.class_names)}
+        return label, round(conf, 2), round(latency_ms, 1), scores
+
     def predict(self, image_path: Path, confidence_threshold: Optional[float] = None) -> Dict[str, Any]:
         """
         Robust Two-Stage AI Diagnosis Engine:
         Stage 1: Multi-Feature Botanical Leaf Verification
                  Rejects non-plant objects (human hands/skin, walls, curtains, tables, clothes).
-        Stage 2: Edge TFLite Disease Classification
-                 Only executed if Stage 1 confirms a genuine plant leaf.
+        Stage 2: Model Classification & Comparison
+                 Compares user's Keras model with TFLite edge model on the verified leaf ROI.
         """
         threshold = confidence_threshold if confidence_threshold is not None else config.DEFAULT_CONFIDENCE_THRESHOLD
 
@@ -213,27 +281,49 @@ class LeafDiseaseClassifier:
                 "verification_details": leaf_details
             }
 
-        # Stage 2: TFLite Disease Classification on Confirmed Leaf ROI
+        # Stage 2: Compare Keras Model and TFLite on Confirmed Leaf ROI
         leaf_roi = self.extract_leaf_roi(img_bgr)
-        input_data = self.preprocess_image_array(leaf_roi)
 
-        # Set input tensor and invoke interpreter
-        self.interpreter.set_tensor(self.input_details[0]["index"], input_data)
-        self.interpreter.invoke()
+        # Run Keras Model
+        keras_class, keras_conf, keras_latency, keras_scores = self.predict_keras_array(leaf_roi)
 
-        # Extract output probabilities
-        output_data = self.interpreter.get_tensor(self.output_details[0]["index"])[0]
-        predicted_idx = int(np.argmax(output_data))
-        raw_confidence = float(output_data[predicted_idx]) * 100.0
-        predicted_class = self.class_names[predicted_idx]
+        # Run TFLite Model
+        tflite_class, tflite_conf, tflite_latency, tflite_scores = self.predict_tflite_array(leaf_roi)
 
-        is_low_confidence = raw_confidence < threshold
+        # Primary diagnosis defaults to user's Keras model if loaded, else TFLite
+        primary_class = keras_class if self.keras_model is not None else tflite_class
+        primary_conf = keras_conf if self.keras_model is not None else tflite_conf
+        primary_scores = keras_scores if self.keras_model is not None else tflite_scores
+
+        is_low_confidence = primary_conf < threshold
+
+        # Comparison metrics
+        models_agree = (keras_class == tflite_class)
+        conf_delta = round(abs(keras_conf - tflite_conf), 2)
+        comparison_info = {
+            "keras_model": {
+                "architecture": "MobileNetV2 Functional (Keras 3)",
+                "predicted_disease": keras_class,
+                "confidence": keras_conf,
+                "latency_ms": keras_latency,
+                "probabilities": keras_scores
+            },
+            "tflite_model": {
+                "architecture": "MobileNetV2 LiteRT / TFLite Edge",
+                "predicted_disease": tflite_class,
+                "confidence": tflite_conf,
+                "latency_ms": tflite_latency,
+                "probabilities": tflite_scores
+            },
+            "models_agree": models_agree,
+            "confidence_difference_pct": conf_delta
+        }
 
         # Retrieve agricultural recommendations
-        disease_info = DISEASE_KNOWLEDGE_BASE.get(predicted_class, {})
+        disease_info = DISEASE_KNOWLEDGE_BASE.get(primary_class, {})
         recommendation_text = disease_info.get("management_guidance", "Regular monitoring recommended.")
         if is_low_confidence:
-            recommendation_text = f"Low confidence diagnosis ({raw_confidence:.1f}% < {threshold}%). Please capture another image with better leaf focus and lighting before taking treatment action."
+            recommendation_text = f"Low confidence diagnosis ({primary_conf:.1f}% < {threshold}%). Please capture another image with better leaf focus and lighting before taking treatment action."
 
         detection_record = {
             "detection_id": f"DET-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}",
@@ -242,20 +332,18 @@ class LeafDiseaseClassifier:
             "image_path": str(image_path.resolve()),
             "leaf_detected": True,
             "status": "CONFIRMED" if not is_low_confidence else "CONFIRMED_LOW_CONFIDENCE",
-            "display_label": "Plant / Leaf Detected" if not is_low_confidence else "Plant / Leaf Detected (Low Confidence)",
+            "display_label": f"Plant / Leaf Detected ({primary_class})" if not is_low_confidence else f"Plant / Leaf Detected (Low Conf: {primary_class})",
             "leaf_confidence": leaf_conf,
-            "predicted_disease": predicted_class,
-            "disease_code": predicted_class,
-            "confidence": round(raw_confidence, 2),
+            "predicted_disease": primary_class,
+            "disease_code": primary_class,
+            "confidence": round(primary_conf, 2),
             "confidence_threshold": threshold,
             "is_low_confidence": is_low_confidence,
-            "all_class_probabilities": {
-                name: round(float(output_data[i]) * 100.0, 2)
-                for i, name in enumerate(self.class_names)
-            },
+            "all_class_probabilities": primary_scores,
+            "comparison": comparison_info,
             "disease_details": disease_info,
             "recommendation": recommendation_text,
-            "sprayer_recommended": (predicted_class in ("Bacterial_Spot", "Cercospora_Leaf_Spot") and not is_low_confidence),
+            "sprayer_recommended": (primary_class in ("Bacterial_Spot", "Cercospora_Leaf_Spot") and not is_low_confidence),
             "requires_user_confirmation": True,
             "verification_details": leaf_details
         }

@@ -672,6 +672,20 @@ def queue_rover_estop():
     PENDING_COMMANDS.append(command_obj)
     return jsonify({"success": True, "message": "Emergency Stop queued."})
 
+@app.route("/api/rover/mode", methods=["POST"])
+def set_cloud_rover_mode():
+    data = request.get_json(force=True, silent=True) or {}
+    mode = str(data.get("mode", "MANUAL")).upper()
+    LIVE_STATUS["rover"]["mode"] = mode
+    command_obj = {
+        "id": f"CMD-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+        "type": "ROVER_MODE",
+        "mode": mode,
+        "created_at": datetime.now().isoformat()
+    }
+    PENDING_COMMANDS.append(command_obj)
+    return jsonify({"success": True, "mode": mode, "message": f"Rover mode set to {mode}"})
+
 @app.route("/api/sprayer/command", methods=["POST"])
 @app.route("/api/sprayer/activate", methods=["POST"])
 def queue_sprayer_command():
@@ -720,7 +734,7 @@ def get_cloud_sensors():
 # -------------------------------------------------------------
 @app.route("/api/camera/stream_frame", methods=["POST"])
 def api_camera_stream_frame():
-    """Receives live camera JPEG frames sent from the Raspberry Pi rover."""
+    """Receives live camera JPEG frames sent from the Raspberry Pi rover and dispatches pending commands with minimal latency."""
     file = request.files.get("frame")
     data = None
     if file:
@@ -736,7 +750,19 @@ def api_camera_stream_frame():
         LIVE_STATUS["last_seen"] = LATEST_LIVE_FRAME["timestamp"]
         LIVE_STATUS["camera"]["camera_connected"] = True
         LIVE_STATUS["camera"]["status"] = "STREAMING"
-        return jsonify({"success": True, "timestamp": LATEST_LIVE_FRAME["timestamp"]})
+
+        # Dispatch any pending remote rover/camera commands with ~120ms roundtrip response
+        commands_to_send = []
+        global PENDING_COMMANDS
+        if PENDING_COMMANDS:
+            commands_to_send = list(PENDING_COMMANDS)
+            PENDING_COMMANDS = []
+
+        return jsonify({
+            "success": True,
+            "timestamp": LATEST_LIVE_FRAME["timestamp"],
+            "pending_commands": commands_to_send
+        })
     return jsonify({"success": False, "error": "No frame data"}), 400
 
 @app.route("/api/camera/live_frame", methods=["GET"])
@@ -749,7 +775,8 @@ def api_camera_live_frame():
             headers={
                 "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
                 "Pragma": "no-cache",
-                "Expires": "0"
+                "Expires": "0",
+                "Access-Control-Allow-Origin": "*"
             }
         )
 
@@ -777,7 +804,8 @@ def api_camera_live_frame():
         mimetype="image/svg+xml",
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Pragma": "no-cache"
+            "Pragma": "no-cache",
+            "Access-Control-Allow-Origin": "*"
         }
     )
 
@@ -787,6 +815,14 @@ def cloud_camera_stream():
     """MJPEG stream yielding latest frames arriving from Raspberry Pi."""
     def generate_stream():
         last_yielded_ts = None
+        # Send initial frame immediately to establish multipart connection without proxy timeout
+        if LATEST_LIVE_FRAME["bytes"] is not None:
+            last_yielded_ts = LATEST_LIVE_FRAME["timestamp"]
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n" + LATEST_LIVE_FRAME["bytes"] + b"\r\n"
+            )
+
         while True:
             try:
                 if LATEST_LIVE_FRAME["bytes"] is not None and LATEST_LIVE_FRAME["timestamp"] != last_yielded_ts:
@@ -806,9 +842,98 @@ def cloud_camera_stream():
         mimetype="multipart/x-mixed-replace; boundary=frame",
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Pragma": "no-cache"
+            "Pragma": "no-cache",
+            "Access-Control-Allow-Origin": "*"
         }
     )
+
+@app.route("/api/camera/capture", methods=["POST"])
+def api_camera_capture():
+    """Runs instant diagnosis on the current live frame and queues leaf capture for Pi."""
+    command_obj = {
+        "id": f"CMD-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+        "type": "CAPTURE_LEAF",
+        "created_at": datetime.now().isoformat()
+    }
+    PENDING_COMMANDS.append(command_obj)
+
+    if LATEST_LIVE_FRAME["bytes"] is not None:
+        try:
+            image_stream = io.BytesIO(LATEST_LIVE_FRAME["bytes"])
+            pil_img = Image.open(image_stream).convert("RGB")
+            ai_res = cloud_ai.classify_image(pil_img)
+            diag = ai_res.get("diagnosis", {})
+            pred_disease = diag.get("predicted_disease", "Healthy_Leaf")
+            conf = diag.get("confidence", 85.0)
+            leaf_detected = diag.get("leaf_detected", True)
+            recommendation = diag.get("recommendation", "Continue scheduled automated monitoring.")
+
+            det_id = f"SNAP-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            fn = f"cloud_snap_{det_id}.jpg"
+            now_str = datetime.now().isoformat()
+
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT OR REPLACE INTO cloud_detections (
+                        detection_id, device_id, timestamp, image_filename,
+                        predicted_disease, confidence, is_low_confidence,
+                        recommendation, sprayer_status, synced_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    det_id, LIVE_STATUS["device_id"], now_str, fn,
+                    pred_disease, conf, 0 if conf >= 70.0 else 1,
+                    recommendation, "OFF", now_str
+                ))
+                conn.commit()
+
+            return jsonify({
+                "success": True,
+                "message": "Snapshot classified successfully.",
+                "detection": {
+                    "detection_id": det_id,
+                    "timestamp": now_str,
+                    "image_filename": fn,
+                    "predicted_disease": pred_disease,
+                    "confidence": conf,
+                    "leaf_detected": leaf_detected,
+                    "recommendation": recommendation,
+                    "sprayer_status": "OFF"
+                }
+            })
+        except Exception as e:
+            logger.error(f"Instant snapshot classification error: {e}")
+
+    return jsonify({"success": True, "message": "Remote capture signal dispatched to rover."})
+
+@app.route("/api/camera/auto-detect", methods=["GET", "POST"])
+def api_camera_auto_detect():
+    """Controls or queries automated chili leaf detection and capture."""
+    if request.method == "POST":
+        data = request.get_json(force=True, silent=True) or {}
+        enabled = bool(data.get("enabled", True))
+        interval = float(data.get("interval", 3.0))
+        command_obj = {
+            "id": f"CMD-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+            "type": "AUTO_DETECT_CONFIG",
+            "enabled": enabled,
+            "interval": interval,
+            "created_at": datetime.now().isoformat()
+        }
+        PENDING_COMMANDS.append(command_obj)
+        return jsonify({
+            "success": True,
+            "auto_detect_enabled": enabled,
+            "auto_interval_sec": interval
+        })
+    return jsonify({
+        "auto_detect_enabled": LIVE_STATUS["camera"].get("camera_connected", False),
+        "auto_interval_sec": 3.0
+    })
+
+@app.route("/api/sync/trigger", methods=["POST"])
+def api_cloud_sync_trigger():
+    return jsonify({"success": True, "message": "Cloud sync triggered."})
 
 @app.route("/api/camera/status", methods=["GET"])
 def api_camera_status():
